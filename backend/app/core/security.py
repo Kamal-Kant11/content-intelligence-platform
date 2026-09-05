@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
+from fastapi import HTTPException, status
 from jose import jwt, JWTError
 
 from app.core.config import settings
