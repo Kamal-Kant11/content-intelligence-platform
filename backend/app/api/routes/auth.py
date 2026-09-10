@@ -1,13 +1,13 @@
-from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, status
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core.security import hash_password, create_access_token, verify_password
+
+from app.api.dependencies import get_current_user_id
 from app.db.dependencies import get_database
 
 from app.repositories.user import create_user, find_user_by_email, find_user_by_id
 from app.schemas.auth import RegisterRequest, LoginRequest
-from app.api.dependencies import get_current_user_id
 
 
 router = APIRouter(

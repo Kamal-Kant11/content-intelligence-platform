@@ -8,6 +8,7 @@ from app.db.db import database, connect_to_db, close_db_connection
 from app.repositories.user import create_user_indexes
 
 from app.api.routes.auth import router as auth_router
+from app.api.routes.document import router as document_router
 
 
 @asynccontextmanager
@@ -40,6 +41,7 @@ app.add_middleware(
 
 
 app.include_router(auth_router)
+app.include_router(document_router)
 
 
 @app.get("/")
