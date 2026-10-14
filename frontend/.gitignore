@@ -1,7 +1,5 @@
-<<<<<<< HEAD
 node_modules
 dist
-=======
 # Logs
 logs
 *.log
@@ -11,8 +9,6 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
 dist-ssr
 *.local
 
@@ -26,4 +22,3 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
->>>>>>> 344facc097ebdfabdc16f289147488e7355aa81f

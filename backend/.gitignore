@@ -1,12 +1,8 @@
-<<<<<<< HEAD
 node_modules
 .env
 uploads/*
 !uploads/.gitkeep
-=======
 .venv/
 __pycache__/
 *.py[cod]
-.env
 .pytest_cache/
->>>>>>> 344facc097ebdfabdc16f289147488e7355aa81f
