@@ -1,8 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// In development the API is proxied, so the browser sees a single origin
-// and the httpOnly auth cookie works without any CORS tricks.
+// In development /api is proxied to the Express backend, so the browser sees a single origin.
 export default defineConfig({
   plugins: [react()],
   server: {

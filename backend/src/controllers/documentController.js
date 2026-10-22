@@ -1,101 +1,65 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import mongoose from 'mongoose';
-import mammoth from 'mammoth';
-import { PDFParse } from 'pdf-parse';
-import Document from '../models/Document.js';
+// HTTP only: read the request, call a service, send the response.
+// Express 5 forwards errors thrown here to the central error handler.
+import * as documents from '../services/documentService.js';
+import * as analyses from '../services/analysisService.js';
+import * as optimizations from '../services/optimizationService.js';
+import { sendFile } from '../services/exportService.js';
 
-// Reads text out of the saved file. Never throws: on failure the document is
-// still saved, just without extracted text.
-async function extractText(filePath) {
-  try {
-    const ext = path.extname(filePath).toLowerCase();
-    let text = '';
-    if (ext === '.txt') {
-      text = await fs.readFile(filePath, 'utf8');
-    } else if (ext === '.docx') {
-      text = (await mammoth.extractRawText({ path: filePath })).value;
-    } else if (ext === '.pdf') {
-      const parser = new PDFParse({ data: await fs.readFile(filePath) });
-      try {
-        text = (await parser.getText()).text;
-      } finally {
-        await parser.destroy();
-      }
-    }
-    return (text || '').replace(/\0/g, '').trim();
-  } catch (err) {
-    console.error('Text extraction failed:', err.message);
-    return '';
-  }
+// Documents
+export async function createDocument(req, res) {
+  res.status(201).json({ document: await documents.createDocument(req.user._id, req.body) });
 }
 
-const removeFile = (filePath) => fs.unlink(filePath).catch(() => {});
-
-// Every query includes userId, so users can only reach their own documents.
-function ownDocument(req) {
-  if (!mongoose.isValidObjectId(req.params.id)) return null;
-  return { _id: req.params.id, userId: req.user._id };
+export async function uploadDocument(req, res) {
+  res.status(201).json({ document: await documents.createDocumentFromFile(req.user._id, req.file, req.body) });
 }
 
-// POST /api/documents/upload
-export async function uploadDocument(req, res, next) {
-  const file = req.file;
-  try {
-    if (!file) return res.status(400).json({ message: 'Please choose a file to upload.' });
-
-    const fileName = path.basename(Buffer.from(file.originalname, 'latin1').toString('utf8'));
-    const document = await Document.create({
-      userId: req.user._id,
-      title: path.basename(fileName, path.extname(fileName)),
-      fileName,
-      contentType: file.mimetype,
-      fileSize: file.size,
-      storagePath: file.path,
-      originalContent: await extractText(file.path),
-      status: 'draft',
-    });
-
-    res.status(201).json({ document });
-  } catch (err) {
-    if (file) await removeFile(file.path);
-    next(err);
-  }
+export async function getDocuments(req, res) {
+  res.json({ documents: await documents.listDocuments(req.user._id) });
 }
 
-// GET /api/documents
-export async function getDocuments(req, res, next) {
-  try {
-    const documents = await Document.find({ userId: req.user._id }).sort({ createdAt: -1 });
-    res.json({ documents });
-  } catch (err) {
-    next(err);
-  }
+export async function getDocument(req, res) {
+  res.json({ document: await documents.getDocument(req.user._id, req.params.id) });
 }
 
-// GET /api/documents/:id
-export async function getDocument(req, res, next) {
-  try {
-    const filter = ownDocument(req);
-    const doc = filter && (await Document.findOne(filter).select('+originalContent'));
-    if (!doc) return res.status(404).json({ message: 'Document not found.' });
-
-    res.json({ document: { ...doc.toJSON(), originalContent: doc.originalContent } });
-  } catch (err) {
-    next(err);
-  }
+export async function updateDocument(req, res) {
+  res.json({ document: await documents.updateDocument(req.user._id, req.params.id, req.body) });
 }
 
-// DELETE /api/documents/:id
-export async function deleteDocument(req, res, next) {
-  try {
-    const filter = ownDocument(req);
-    const doc = filter && (await Document.findOneAndDelete(filter).select('+storagePath'));
-    if (!doc) return res.status(404).json({ message: 'Document not found.' });
+export async function deleteDocument(req, res) {
+  await documents.deleteDocument(req.user._id, req.params.id);
+  res.json({ message: 'Document deleted.' });
+}
 
-    await removeFile(doc.storagePath);
-    res.json({ message: 'Document deleted.' });
-  } catch (err) {
-    next(err);
-  }
+// Analysis
+export async function analyzeDocument(req, res) {
+  const body = req.body ?? {};
+  const { analysis, cached } = await analyses.analyzeDocument(req.user._id, req.params.id, {
+    brandId: body.brandId,
+    force: body.force === true,
+  });
+  res.status(cached ? 200 : 201).json({ analysis, cached });
+}
+
+export async function getAnalysis(req, res) {
+  res.json(await analyses.getLatestAnalysis(req.user._id, req.params.id));
+}
+
+// Optimization
+export async function optimizeDocument(req, res) {
+  res.status(201).json({ optimization: await optimizations.createOptimization(req.user._id, req.params.id) });
+}
+
+export async function getOptimizations(req, res) {
+  res.json({ optimizations: await optimizations.listOptimizations(req.user._id, req.params.id) });
+}
+
+export async function getOptimization(req, res) {
+  res.json({ optimization: await optimizations.getOptimization(req.user._id, req.params.id, req.params.optimizationId) });
+}
+
+// Export / download
+export async function exportDocument(req, res) {
+  const { file, name } = await documents.exportDocument(req.user._id, req.params.id, req.query);
+  sendFile(res, file, name);
 }

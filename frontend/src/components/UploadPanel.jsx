@@ -5,7 +5,8 @@ import { api, getErrorMessage } from '../api/client.js';
 import { formatBytes, validateFile, fileTypeLabel } from '../utils/format.js';
 
 // Drag-and-drop uploader. Posts to the real /api/documents/upload endpoint.
-export default function UploadPanel({ onUploaded }) {
+// fields: extra form fields sent with the file (title, contentType, brandId).
+export default function UploadPanel({ onUploaded, fields = {} }) {
   const inputRef = useRef(null);
   const [file, setFile] = useState(null);
   const [dragging, setDragging] = useState(false);
@@ -53,6 +54,7 @@ export default function UploadPanel({ onUploaded }) {
     setError('');
     setProgress(0);
     const form = new FormData();
+    for (const [key, value] of Object.entries(fields)) if (value) form.append(key, value);
     form.append('file', file);
     try {
       const res = await api.post('/documents/upload', form, {
@@ -180,7 +182,7 @@ export default function UploadPanel({ onUploaded }) {
         <div role="status" className="mt-4 flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-300">
           <CheckCircle2 size={18} className="mt-0.5 shrink-0" />
           <p>
-            <strong className="font-medium">{doc.fileName}</strong> uploaded successfully.
+            <strong className="font-medium">{doc.source?.fileName || doc.title}</strong> uploaded successfully.
           </p>
         </div>
       )}

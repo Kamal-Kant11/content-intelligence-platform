@@ -1,26 +1,28 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { AlertCircle, ExternalLink, FileText, Loader2, Plus, Trash2 } from 'lucide-react';
+import { CheckCircle2, ClipboardCheck, FileText, Gauge, Globe, Loader2, PenLine, Plus, Search, Trash2, Upload } from 'lucide-react';
 import AppShell from './AppShell.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { api, getErrorMessage } from '../api/client.js';
-import { fileTypeLabel, formatBytes, formatDate } from '../utils/format.js';
+import { formatDate } from '../utils/format.js';
+import { Badge, ErrorAlert, PageHeader, ScoreRing, Spinner, StatCard } from '../components/ui.jsx';
 
-function StatusBadge({ status }) {
-  return (
-    <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium capitalize text-amber-300 ring-1 ring-amber-400/20">
-      {status}
-    </span>
-  );
-}
+const SOURCE_ICONS = { file: Upload, url: Globe, write: PenLine, paste: FileText };
+const FILTERS = [
+  ['all', 'All'],
+  ['draft', 'Draft'],
+  ['in_review', 'In review'],
+  ['approved', 'Approved'],
+];
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
   const [deletingId, setDeletingId] = useState(null);
   const [confirmId, setConfirmId] = useState(null);
 
@@ -28,8 +30,7 @@ export default function Dashboard() {
     setLoading(true);
     setError('');
     try {
-      const res = await api.get('/documents');
-      setDocuments(res.data.documents);
+      setDocuments((await api.get('/documents')).data.documents);
     } catch (err) {
       setError(getErrorMessage(err, 'Could not load your documents.'));
     } finally {
@@ -43,7 +44,6 @@ export default function Dashboard() {
 
   async function onDelete(id) {
     setDeletingId(id);
-    setError('');
     try {
       await api.delete(`/documents/${id}`);
       setDocuments((docs) => docs.filter((d) => d.id !== id));
@@ -55,93 +55,139 @@ export default function Dashboard() {
     }
   }
 
+  const stats = useMemo(() => {
+    const scored = documents.filter((d) => typeof d.lastAnalysis?.overallScore === 'number');
+    const avg = scored.length ? Math.round(scored.reduce((s, d) => s + d.lastAnalysis.overallScore, 0) / scored.length) : null;
+    return {
+      total: documents.length,
+      avg,
+      scored: scored.length,
+      inReview: documents.filter((d) => d.status === 'in_review').length,
+      approved: documents.filter((d) => d.status === 'approved').length,
+    };
+  }, [documents]);
+
+  const visible = documents.filter(
+    (d) => (filter === 'all' || d.status === filter) && d.title.toLowerCase().includes(query.trim().toLowerCase())
+  );
   const firstName = user?.name?.split(' ')[0] || 'there';
 
   return (
     <AppShell>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-white">Welcome, {firstName}</h1>
-          <p className="mt-1 text-sm text-slate-400">Manage the documents in your private workspace.</p>
-        </div>
-        <Link to="/upload" className="btn-primary">
-          <Plus size={16} /> Upload Document
-        </Link>
+      <PageHeader title={`Welcome back, ${firstName}`} subtitle="Track quality scores and review progress across all your content." />
+
+      <div className="mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard icon={FileText} label="Documents" value={stats.total} hint={`${stats.scored} analyzed`} />
+        <StatCard icon={Gauge} label="Average score" value={stats.avg ?? '—'} hint="across analyzed documents" tone="sky" />
+        <StatCard icon={ClipboardCheck} label="In review" value={stats.inReview} hint="changes waiting for you" tone="amber" />
+        <StatCard icon={CheckCircle2} label="Approved" value={stats.approved} hint="changes applied" tone="emerald" />
       </div>
 
-      <h2 className="mb-3 mt-9 text-sm font-medium uppercase tracking-wide text-slate-400">My Documents</h2>
+      <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative sm:w-72">
+          <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input className="input pl-9" placeholder="Search documents" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search documents" />
+        </div>
+        <div className="flex gap-1 overflow-x-auto rounded-xl border border-charcoal-700 bg-charcoal-900/80 p-1">
+          {FILTERS.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setFilter(id)}
+              className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm ${filter === id ? 'bg-charcoal-700 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {error && (
-        <div role="alert" className="mb-4 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-          <AlertCircle size={18} className="mt-0.5 shrink-0" />
-          <span className="flex-1">{error}</span>
-          <button type="button" onClick={load} className="font-medium underline">
-            Retry
-          </button>
+        <div className="mt-4">
+          <ErrorAlert onRetry={load}>{error}</ErrorAlert>
         </div>
       )}
 
       {loading ? (
-        <div className="flex justify-center py-16">
-          <Loader2 className="h-6 w-6 animate-spin text-indigo-400" aria-label="Loading documents" />
-        </div>
+        <Spinner label="Loading documents" />
       ) : documents.length === 0 && !error ? (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="card px-6 py-14 text-center">
-          <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300">
-            <FileText size={24} />
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="card mt-6 px-6 py-16 text-center">
+          <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-500/15 text-indigo-300">
+            <FileText size={26} />
           </span>
-          <h3 className="mt-4 font-medium text-white">No documents yet</h3>
-          <p className="mx-auto mt-1.5 max-w-sm text-sm text-slate-400">
-            Upload your first PDF, DOCX or TXT file to get started.
+          <h3 className="mt-4 text-lg font-medium text-white">Add your first piece of content</h3>
+          <p className="mx-auto mt-1.5 max-w-md text-sm text-slate-400">
+            Write or paste text, upload a PDF, DOCX or TXT file, or import a web page. You get a section-by-section quality report in seconds.
           </p>
-          <Link to="/upload" className="btn-primary mt-6">
-            <Plus size={16} /> Upload Document
+          <Link to="/documents/new" className="btn-primary mt-6">
+            <Plus size={16} /> New content
           </Link>
         </motion.div>
       ) : (
-        <ul className="space-y-3">
-          {documents.map((doc) => (
-            <li key={doc.id} className="card p-4">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                <div className="flex min-w-0 flex-1 items-center gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-500/15 text-indigo-300">
-                    <FileText size={20} />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-slate-100" title={doc.fileName}>
-                      {doc.fileName}
-                    </p>
-                    <p className="mt-0.5 text-xs text-slate-400">
-                      {fileTypeLabel(doc.fileName)} · {formatBytes(doc.fileSize)} · Uploaded {formatDate(doc.createdAt)}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between gap-3 sm:justify-end">
-                  <StatusBadge status={doc.status} />
-                  {confirmId === doc.id ? (
-                    <div className="flex items-center gap-2">
-                      <button type="button" className="btn-danger px-3 py-2" onClick={() => onDelete(doc.id)} disabled={deletingId === doc.id}>
-                        {deletingId === doc.id ? <Loader2 size={14} className="animate-spin" /> : 'Confirm'}
-                      </button>
-                      <button type="button" className="btn-secondary px-3 py-2" onClick={() => setConfirmId(null)} disabled={deletingId === doc.id}>
-                        Cancel
-                      </button>
+        <div className="card mt-4 overflow-hidden">
+          <div className="hidden grid-cols-[minmax(0,1fr)_7rem_7rem_8rem_5.5rem] gap-4 border-b border-charcoal-700 px-5 py-3 text-xs uppercase tracking-wide text-slate-500 md:grid">
+            <span>Document</span>
+            <span>Score</span>
+            <span>Status</span>
+            <span>Created</span>
+            <span />
+          </div>
+          {visible.length === 0 ? (
+            <p className="px-5 py-10 text-center text-sm text-slate-400">No documents match.</p>
+          ) : (
+            <ul className="divide-y divide-charcoal-800">
+              {visible.map((doc) => {
+                const Icon = SOURCE_ICONS[doc.sourceType] || FileText;
+                return (
+                  <li key={doc.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 py-4 transition hover:bg-charcoal-800/40 md:grid-cols-[minmax(0,1fr)_7rem_7rem_8rem_5.5rem]">
+                    <Link to={`/documents/${doc.id}`} className="flex min-w-0 items-center gap-3">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-300">
+                        <Icon size={19} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-slate-100">{doc.title}</span>
+                        <span className="block truncate text-xs capitalize text-slate-500">
+                          {doc.contentType} · {doc.wordCount} words · {doc.source?.fileName || doc.sourceType}
+                        </span>
+                      </span>
+                    </Link>
+                    <div className="hidden md:block">
+                      <ScoreRing score={doc.lastAnalysis?.overallScore} size={40} stroke={4} />
                     </div>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <button type="button" className="btn-secondary px-3 py-2" onClick={() => navigate(`/documents/${doc.id}`)}>
-                        <ExternalLink size={14} /> Open
-                      </button>
-                      <button type="button" className="btn-danger px-3 py-2" onClick={() => setConfirmId(doc.id)} aria-label={`Delete ${doc.fileName}`}>
-                        <Trash2 size={14} /> Delete
-                      </button>
+                    <div className="hidden md:block">
+                      <Badge value={doc.status} />
                     </div>
-                  )}
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
+                    <span className="hidden text-sm text-slate-400 md:block">{formatDate(doc.createdAt)}</span>
+                    <div className="flex items-center justify-end gap-2">
+                      <span className="md:hidden">
+                        <ScoreRing score={doc.lastAnalysis?.overallScore} size={40} stroke={4} />
+                      </span>
+                      {confirmId === doc.id ? (
+                        <>
+                          <button type="button" className="btn-danger px-2.5 py-1.5 text-xs" onClick={() => onDelete(doc.id)} disabled={deletingId === doc.id}>
+                            {deletingId === doc.id ? <Loader2 size={14} className="animate-spin" /> : 'Delete'}
+                          </button>
+                          <button type="button" className="btn-secondary px-2.5 py-1.5 text-xs" onClick={() => setConfirmId(null)}>
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="rounded-lg p-2 text-slate-500 hover:bg-red-500/10 hover:text-red-300"
+                          onClick={() => setConfirmId(doc.id)}
+                          aria-label={`Delete ${doc.title}`}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       )}
     </AppShell>
   );

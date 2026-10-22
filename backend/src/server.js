@@ -1,39 +1,58 @@
-import express from 'express';
-import cors from 'cors';
-import multer from 'multer';
+import mongoose from 'mongoose';
 import { config, connectDB } from './config/config.js';
-import authRoutes from './routes/authRoutes.js';
-import documentRoutes from './routes/documentRoutes.js';
+import { createApp } from './app.js';
+import { migrateLegacyDocuments } from './db/migrations.js';
+import { loadModels } from './services/modelService.js';
 
-const app = express();
+// Log anything that would otherwise crash the process silently.
+process.on('unhandledRejection', (err) => console.error('Unhandled promise rejection:', err));
 
-app.use(cors({ origin: config.clientOrigin }));
-app.use(express.json());
+function listen(app, port) {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(port);
+    server.once('listening', () => resolve(server));
+    server.once('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        reject(
+          new Error(
+            `Port ${port} is already in use, probably by another copy of this backend. ` +
+              `Stop it (close its terminal, or find it with "netstat -ano | findstr :${port}" and run "taskkill /PID <pid> /F"), ` +
+              'or set a different PORT in backend/.env.'
+          )
+        );
+      } else {
+        reject(err);
+      }
+    });
+  });
+}
 
-app.use('/api/auth', authRoutes);
-app.use('/api/documents', documentRoutes);
+let server;
 
-app.use((req, res) => res.status(404).json({ message: 'Route not found.' }));
-
-// Central error handler
-// eslint-disable-next-line no-unused-vars
-app.use((err, _req, res, _next) => {
-  if (err instanceof multer.MulterError) {
-    const message =
-      err.code === 'LIMIT_FILE_SIZE' ? 'File is too large. Maximum size is 10 MB.' : 'Invalid file upload.';
-    return res.status(err.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({ message });
+// Close the HTTP server and MongoDB on Ctrl+C or when node --watch restarts,
+// so the port is free again immediately.
+async function shutdown(signal) {
+  console.log(`${signal} received, shutting down...`);
+  const force = setTimeout(() => process.exit(1), 5000).unref();
+  try {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await mongoose.disconnect();
+  } finally {
+    clearTimeout(force);
+    process.exit(0);
   }
-  if (err.type === 'entity.parse.failed') return res.status(400).json({ message: 'Invalid JSON body.' });
-  if (err.status && err.status < 500) return res.status(err.status).json({ message: err.message });
-
-  console.error(err);
-  res.status(500).json({ message: 'Something went wrong on the server.' });
-});
+}
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));
 
 try {
   await connectDB();
-  app.listen(config.port, () => console.log(`API running on http://localhost:${config.port}`));
+  await migrateLegacyDocuments();
+  await loadModels();
+  server = await listen(createApp(), Number(config.port));
+  console.log(`API running on http://localhost:${config.port}`);
 } catch (err) {
-  console.error('Startup failed:', err.message);
+  console.error(`Startup failed: ${err.message}`);
+  await mongoose.disconnect().catch(() => {});
   process.exit(1);
 }
