@@ -7,7 +7,7 @@ export function FormField({ label, id, error, type = 'text', ...props }) {
 
   return (
     <div>
-      <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-slate-300">
+      <label htmlFor={id} className="label">
         {label}
       </label>
       <div className="relative">
@@ -23,7 +23,7 @@ export function FormField({ label, id, error, type = 'text', ...props }) {
           <button
             type="button"
             onClick={() => setShow((s) => !s)}
-            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-400 hover:text-slate-200"
+            className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-slate-500 hover:text-slate-200"
             aria-label={show ? 'Hide password' : 'Show password'}
           >
             {show ? <EyeOff size={18} /> : <Eye size={18} />}

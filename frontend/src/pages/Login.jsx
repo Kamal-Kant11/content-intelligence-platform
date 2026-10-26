@@ -45,11 +45,11 @@ export default function Login() {
   return (
     <AuthLayout
       title="Welcome back"
-      subtitle="Log in to manage your documents."
+      subtitle="Log in to ContentIQ to continue with your documents."
       footer={
         <>
           New here?{' '}
-          <Link to="/signup" className="font-medium text-indigo-300 hover:text-indigo-200">
+          <Link to="/signup" className="font-medium text-indigo-300 hover:text-violet-300">
             Create an account
           </Link>
         </>

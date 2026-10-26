@@ -1,140 +1,105 @@
-// Extraction: file / URL -> markdown-like text that normalization understands.
-// DOCX and web pages keep their heading / list / quote structure.
-import fs from 'node:fs/promises';
+// Turns an uploaded file or a web page into plain text for the analysis pipeline.
 import path from 'node:path';
-import dns from 'node:dns/promises';
-import net from 'node:net';
+import * as cheerio from 'cheerio';
 import mammoth from 'mammoth';
 import { PDFParse } from 'pdf-parse';
-import { config } from '../config/config.js';
 import { badRequest } from '../utils/httpError.js';
-import { normalizeText } from '../intelligence/normalize.js';
+import { hasWords, normalizeText } from '../utils/text.js';
+import { fetchPublicPage } from './safeFetch.js';
 
-const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', rsquo: '’', lsquo: '‘', rdquo: '”', ldquo: '“', mdash: '—', ndash: '–', hellip: '…' };
+export const ALLOWED_EXTENSIONS = ['.pdf', '.docx', '.txt'];
 
-function decodeEntities(s) {
-  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e) => {
-    if (e[0] === '#') {
-      const code = e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : m;
-    }
-    return ENTITIES[e.toLowerCase()] ?? m;
-  });
+const startsWith = (buffer, signature) => buffer.subarray(0, signature.length).equals(Buffer.from(signature, 'latin1'));
+
+// PDFs break lines at the page edge: join wrapped lines and words hyphenated across lines,
+// keep blank lines as paragraph breaks, and drop the "-- 1 of 3 --" page markers.
+function unwrapPdfText(text) {
+  return text
+    .replace(/^\s*--\s*\d+\s+of\s+\d+\s*--\s*$/gm, '')
+    .replace(/(\p{L})-\n(\p{Ll})/gu, '$1$2')
+    .replace(/([^\n])\n(?!\n|\s*[-•*]\s|\s*\d+[.)]\s)/g, '$1 ');
 }
 
-export function htmlToMarkdown(html) {
-  let body = String(html)
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<(script|style|noscript|svg|nav|footer|header|form|iframe|aside)\b[\s\S]*?<\/\1>/gi, '');
-  const main = body.match(/<(article|main)\b[^>]*>([\s\S]*?)<\/\1>/i);
-  if (main) body = main[2];
-
-  const md = body
-    .replace(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi, (m, n, t) => `\n\n${'#'.repeat(Number(n))} ${t.replace(/<[^>]+>/g, '').trim()}\n\n`)
-    .replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, (m, t) => `\n- ${t.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()}`)
-    .replace(/<\/(ul|ol)>/gi, '\n\n')
-    .replace(/<blockquote\b[^>]*>([\s\S]*?)<\/blockquote>/gi, (m, t) => `\n\n> ${t.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()}\n\n`)
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|section|tr|table)>/gi, '\n\n')
-    .replace(/<[^>]+>/g, ' ');
-
-  return normalizeText(
-    decodeEntities(md)
-      .split('\n')
-      .map((l) => l.replace(/[ \t]+/g, ' ').trim())
-      .join('\n')
-  );
-}
-
-export const htmlTitle = (html) => decodeEntities(String(html).match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '').trim();
-
-// Never throws for a bad file: returns '' and the caller decides what to do.
-export async function extractFile(filePath) {
+async function pdfToText(buffer) {
+  const parser = new PDFParse({ data: new Uint8Array(buffer) });
   try {
-    const ext = path.extname(filePath).toLowerCase();
-    if (ext === '.txt') return normalizeText(await fs.readFile(filePath, 'utf8'));
-    if (ext === '.docx') return htmlToMarkdown((await mammoth.convertToHtml({ path: filePath })).value);
-    if (ext === '.pdf') {
-      const parser = new PDFParse({ data: await fs.readFile(filePath) });
-      try {
-        return normalizeText((await parser.getText()).text);
-      } finally {
-        await parser.destroy();
-      }
-    }
-    return '';
-  } catch (err) {
-    console.error('Text extraction failed:', err.message);
-    return '';
+    return unwrapPdfText((await parser.getText()).text);
+  } finally {
+    await parser.destroy();
   }
 }
 
-function isPrivateAddress(ip) {
-  if (net.isIPv4(ip)) {
-    const [a, b] = ip.split('.').map(Number);
-    return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
-  }
-  const v6 = ip.toLowerCase();
-  return v6 === '::1' || v6 === '::' || v6.startsWith('fc') || v6.startsWith('fd') || v6.startsWith('fe80') || v6.startsWith('::ffff:127.');
-}
-
-async function assertPublicUrl(url) {
-  if (!['http:', 'https:'].includes(url.protocol)) throw badRequest('Only http and https URLs are supported.');
-  if (config.allowPrivateUrls) return;
-  const addresses = await dns.lookup(url.hostname, { all: true }).catch(() => []);
-  if (!addresses.length) throw badRequest('Could not resolve that website.');
-  if (addresses.some((a) => isPrivateAddress(a.address))) throw badRequest('Private or local network addresses are not allowed.');
-}
-
-// Fetches a public web page and returns { title, content }.
-// Redirects are followed by hand so every hop is checked against private addresses.
-export async function extractUrl(rawUrl) {
-  let url;
+function decodeTxt(buffer) {
+  if (buffer.includes(0)) throw badRequest('This does not look like a text file.');
   try {
-    url = new URL(String(rawUrl).trim());
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
   } catch {
-    throw badRequest('Enter a valid URL, including http:// or https://.');
+    return new TextDecoder('windows-1252').decode(buffer); // older Windows editors
   }
+}
 
-  let res;
-  for (let hop = 0; ; hop++) {
-    await assertPublicUrl(url);
+// Checks the real file type (not just the extension) and returns its text.
+export async function extractFileText(buffer, originalName) {
+  const ext = path.extname(originalName || '').toLowerCase();
+  if (!ALLOWED_EXTENSIONS.includes(ext)) throw badRequest('Only PDF, DOCX and TXT files are supported.');
+  if (!buffer?.length) throw badRequest('The file is empty.');
+
+  let text;
+  if (ext === '.pdf') {
+    if (!startsWith(buffer, '%PDF-')) throw badRequest('This file is not a valid PDF.');
     try {
-      res = await fetch(url, {
-        redirect: 'manual',
-        signal: AbortSignal.timeout(config.urlFetchTimeoutMs),
-        headers: { 'User-Agent': 'ContentAssuranceBot/1.0', Accept: 'text/html,text/plain' },
-      });
-    } catch {
-      throw badRequest('Could not reach that URL.');
+      text = await pdfToText(buffer);
+    } catch (err) {
+      console.error('PDF extraction failed:', err.message);
+      throw badRequest('Could not read this PDF. It may be damaged or password-protected.');
     }
-    const location = res.headers.get('location');
-    if (res.status < 300 || res.status >= 400 || !location) break;
-    if (hop >= 4) throw badRequest('Too many redirects.');
-    url = new URL(location, url);
-  }
-  if (!res.ok) throw badRequest(`The website responded with status ${res.status}.`);
-
-  const type = res.headers.get('content-type') || '';
-  if (!/text\/html|text\/plain|application\/xhtml/.test(type)) throw badRequest('That URL is not a web page or text file.');
-
-  const reader = res.body.getReader();
-  const chunks = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.length;
-    if (size > config.urlMaxBytes) {
-      await reader.cancel();
-      break; // keep what we have; 2 MB of HTML is plenty of text
+  } else if (ext === '.docx') {
+    if (!startsWith(buffer, 'PK\x03\x04')) throw badRequest('This file is not a valid DOCX document.');
+    try {
+      text = (await mammoth.extractRawText({ buffer })).value;
+    } catch (err) {
+      console.error('DOCX extraction failed:', err.message);
+      throw badRequest('Could not read this DOCX file. It may be damaged.');
     }
-    chunks.push(value);
+  } else {
+    text = decodeTxt(buffer);
   }
-  const body = Buffer.concat(chunks).toString('utf8');
-  const isHtml = !/text\/plain/.test(type);
-  return {
-    title: isHtml ? htmlTitle(body) : '',
-    content: isHtml ? htmlToMarkdown(body) : normalizeText(body),
-  };
+
+  text = normalizeText(text);
+  if (!hasWords(text)) {
+    throw badRequest(
+      ext === '.pdf' ? 'No text found in this PDF. Scanned (image-only) PDFs are not supported.' : 'No readable text found in this file.'
+    );
+  }
+  return text;
+}
+
+const BLOCKS = 'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,figcaption,dt,dd,td,th';
+
+// Main readable text of an HTML page: drops scripts, menus, footers and forms, prefers
+// <article>/<main>, and keeps one paragraph per block element.
+export function htmlToText(html) {
+  const $ = cheerio.load(html);
+  const title = $('title').first().text().replace(/\s+/g, ' ').trim() || $('h1').first().text().replace(/\s+/g, ' ').trim();
+
+  $('script,style,noscript,template,svg,iframe,nav,header,footer,aside,form,button,select').remove();
+  const root = [$('article').first(), $('main').first(), $('[role="main"]').first(), $('body')].find((el) => el.length) || $.root();
+
+  const blocks = [];
+  root.find(BLOCKS).each((_, el) => {
+    if ($(el).find(BLOCKS).length) return; // a container; its inner blocks are collected on their own
+    const text = $(el).text().replace(/\s+/g, ' ').trim();
+    if (text) blocks.push(text);
+  });
+  const text = blocks.length ? blocks.join('\n\n') : root.text().replace(/\s+/g, ' ').trim();
+  return { title, text: normalizeText(text) };
+}
+
+export async function extractUrlText(rawUrl) {
+  const page = await fetchPublicPage(rawUrl);
+  const { title, text } = page.isHtml ? htmlToText(page.body) : { title: '', text: normalizeText(page.body) };
+  if (!hasWords(text)) {
+    throw badRequest('No readable text found on that page. It may be built with JavaScript; copy the text and use Paste Text instead.');
+  }
+  return { url: page.finalUrl, title, text };
 }

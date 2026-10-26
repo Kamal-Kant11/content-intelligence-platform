@@ -1,15 +1,18 @@
-// End-to-end API test against a real MongoDB, in a throwaway database.
+// End-to-end API test against a real MongoDB, in a throwaway database, with a fake LanguageTool.
 // Skipped automatically when MongoDB is not reachable.
-//   TEST_MONGODB_URI=mongodb://127.0.0.1:27017/ai_content_assurance_test npm test
+//   TEST_MONGODB_URI=mongodb://127.0.0.1:27017/contentiq_test npm test
 import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import mongoose from 'mongoose';
+import { startFakeLanguageTool } from './fakeLanguageTool.js';
 
+const languageTool = await startFakeLanguageTool();
+process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET ||= 'test-secret';
+process.env.LANGUAGETOOL_URL = `http://127.0.0.1:${languageTool.address().port}`;
 const { createApp } = await import('../src/app.js');
-const { loadModels } = await import('../src/services/modelService.js');
 
-const uri = process.env.TEST_MONGODB_URI || 'mongodb://127.0.0.1:27017/ai_content_assurance_test';
+const uri = process.env.TEST_MONGODB_URI || 'mongodb://127.0.0.1:27017/contentiq_test';
 let server;
 let base;
 let available = true;
@@ -22,178 +25,237 @@ before(async () => {
     available = false;
     return;
   }
-  await loadModels();
   server = createApp().listen(0);
   base = `http://127.0.0.1:${server.address().port}/api`;
 });
 
 after(async () => {
   server?.close();
+  languageTool.close();
   if (available) await mongoose.connection.dropDatabase();
   await mongoose.disconnect();
 });
 
-async function call(method, path, { token, body } = {}) {
-  const res = await fetch(base + path, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  return { status: res.status, body: await res.json() };
+// Sends a request with the session cookie (if any) and returns { status, body, headers, cookie }.
+async function call(method, path, { cookie, body, form } = {}) {
+  const headers = cookie ? { Cookie: cookie } : {};
+  if (body) headers['Content-Type'] = 'application/json';
+  const res = await fetch(base + path, { method, headers, body: form ?? (body ? JSON.stringify(body) : undefined) });
+  const type = res.headers.get('content-type') || '';
+  const data = type.includes('application/json') ? await res.json() : Buffer.from(await res.arrayBuffer());
+  const setCookie = res.headers.get('set-cookie');
+  return { status: res.status, body: data, headers: res.headers, cookie: setCookie?.split(';')[0] };
 }
 
-async function signup(email) {
-  const res = await call('POST', '/auth/signup', {
-    body: { name: 'Test User', email, password: 'password123', confirmPassword: 'password123' },
-  });
+const SIGNUP = { name: 'Test User', email: 'user@example.com', password: 'password123', confirmPassword: 'password123' };
+const SAMPLE = 'We was happy with teh results. Please recieve the report in order to utilize it.';
+
+async function registerUser(email) {
+  const res = await call('POST', '/auth/register', { body: { ...SIGNUP, email } });
   assert.equal(res.status, 201);
-  return res.body.token;
+  return res.cookie;
 }
 
-test('health reports database and models', async (t) => {
+test('health reports the database and grammar service', async (t) => {
   if (!available) return t.skip('MongoDB not reachable');
   const res = await call('GET', '/health');
   assert.equal(res.status, 200);
   assert.equal(res.body.database, 'up');
+  assert.equal(res.body.grammarService, 'up');
 });
 
-test('document -> analysis -> optimization -> review -> final content', async (t) => {
+test('register, login, me and logout with an HTTP-only cookie', async (t) => {
   if (!available) return t.skip('MongoDB not reachable');
-  const token = await signup('flow@example.com');
-  const other = await signup('other@example.com');
 
-  // create (normalization + blocks)
-  const created = await call('POST', '/documents', {
-    token,
-    body: {
-      title: 'Launch post',
-      contentType: 'blog',
-      sourceType: 'paste',
-      content: '# Launch\n\nOur revolutionary platform helps teams utilize data.\n\nWe was ready for launch.',
-    },
-  });
+  const signup = await call('POST', '/auth/register', { body: SIGNUP });
+  assert.equal(signup.status, 201);
+  assert.equal(signup.body.token, undefined);
+  assert.equal(signup.body.user.email, SIGNUP.email);
+  assert.equal(signup.body.user.passwordHash, undefined);
+  const setCookie = signup.headers.get('set-cookie');
+  assert.match(setCookie, /HttpOnly/);
+  assert.match(setCookie, /SameSite=Strict/);
+
+  assert.equal((await call('POST', '/auth/register', { body: SIGNUP })).status, 409);
+  assert.equal((await call('POST', '/auth/login', { body: { email: SIGNUP.email, password: 'wrongpass1' } })).status, 401);
+
+  const login = await call('POST', '/auth/login', { body: { email: SIGNUP.email, password: SIGNUP.password } });
+  assert.equal(login.status, 200);
+  assert.ok(login.cookie);
+
+  const me = await call('GET', '/auth/me', { cookie: login.cookie });
+  assert.equal(me.status, 200);
+  assert.equal(me.body.user.name, SIGNUP.name);
+
+  const logout = await call('POST', '/auth/logout', { cookie: login.cookie });
+  assert.equal(logout.status, 200);
+  assert.match(logout.headers.get('set-cookie'), /contentiq_token=;/);
+});
+
+test('signup validation and protected routes', async (t) => {
+  if (!available) return t.skip('MongoDB not reachable');
+
+  const weak = await call('POST', '/auth/register', { body: { ...SIGNUP, email: 'b@example.com', password: 'short', confirmPassword: 'short' } });
+  assert.equal(weak.status, 400);
+  const mismatch = await call('POST', '/auth/register', { body: { ...SIGNUP, email: 'c@example.com', confirmPassword: 'different1' } });
+  assert.equal(mismatch.status, 400);
+
+  assert.equal((await call('GET', '/auth/me')).status, 401);
+  assert.equal((await call('GET', '/auth/me', { cookie: 'contentiq_token=bad.token' })).status, 401);
+  assert.equal((await call('GET', '/documents')).status, 401);
+});
+
+test('content input validation', async (t) => {
+  if (!available) return t.skip('MongoDB not reachable');
+  const cookie = await registerUser('input@example.com');
+
+  assert.equal((await call('POST', '/documents/from-text', { cookie, body: { text: '   ' } })).status, 400);
+  assert.equal((await call('POST', '/documents/from-text', { cookie, body: { text: 'a '.repeat(15_000) } })).status, 400);
+  assert.equal((await call('POST', '/documents/from-url', { cookie, body: { url: 'http://127.0.0.1/admin' } })).status, 400);
+
+  const form = new FormData();
+  form.append('file', new Blob(['not really a pdf']), 'fake.pdf');
+  const fakePdf = await call('POST', '/documents/upload', { cookie, form });
+  assert.equal(fakePdf.status, 400);
+  assert.match(fakePdf.body.message, /not a valid PDF/);
+
+  const exe = new FormData();
+  exe.append('file', new Blob(['MZ']), 'tool.exe');
+  assert.equal((await call('POST', '/documents/upload', { cookie, form: exe })).status, 400);
+});
+
+test('upload a TXT file', async (t) => {
+  if (!available) return t.skip('MongoDB not reachable');
+  const cookie = await registerUser('upload@example.com');
+
+  const form = new FormData();
+  form.append('file', new Blob([SAMPLE], { type: 'text/plain' }), 'Weekly notes.txt');
+  const res = await call('POST', '/documents/upload', { cookie, form });
+  assert.equal(res.status, 201);
+  assert.equal(res.body.document.title, 'Weekly notes');
+  assert.equal(res.body.document.sourceType, 'file');
+  assert.equal(res.body.document.original.text, SAMPLE);
+  assert.equal(res.body.document.status, 'draft');
+});
+
+test('analyze, optimize, edit, approve and export', async (t) => {
+  if (!available) return t.skip('MongoDB not reachable');
+  const cookie = await registerUser('flow@example.com');
+
+  const created = await call('POST', '/documents/from-text', { cookie, body: { title: 'Report', text: SAMPLE } });
   assert.equal(created.status, 201);
-  const doc = created.body.document;
-  assert.deepEqual(doc.blocks.map((b) => b.type), ['heading', 'paragraph', 'paragraph']);
-  assert.equal(doc.originalContent, doc.currentContent);
+  const id = created.body.document.id;
 
-  // ownership
-  assert.equal((await call('GET', `/documents/${doc.id}`, { token: other })).status, 404);
-  assert.equal((await call('GET', '/documents', { token: other })).body.documents.length, 0);
-  assert.equal((await call('GET', `/documents/${doc.id}`)).status, 401);
+  // Nothing to download before approval
+  assert.equal((await call('GET', `/documents/${id}/export?format=txt`, { cookie })).status, 409);
 
-  // optimize before analyze -> 409
-  assert.equal((await call('POST', `/documents/${doc.id}/optimize`, { token })).status, 409);
+  // Analyze: real issues from (fake) LanguageTool + Flesch metrics
+  const analyzed = await call('POST', `/documents/${id}/analyze`, { cookie });
+  assert.equal(analyzed.status, 200);
+  const original = analyzed.body.document.original.analysis;
+  assert.equal(original.grammar.issueCount, 3);
+  assert.deepEqual(original.grammar.issues.map((i) => i.text), ['teh', 'We was', 'recieve']);
+  assert.equal(original.grammar.issues[0].start, SAMPLE.indexOf('teh'));
+  assert.ok(original.grammar.score < 100);
+  assert.equal(original.readability.wordCount, 15);
+  assert.equal(typeof original.readability.fleschReadingEase, 'number');
+  assert.equal(analyzed.body.document.status, 'analyzed');
 
-  // analyze
-  const analyzed = await call('POST', `/documents/${doc.id}/analyze`, { token, body: {} });
-  assert.equal(analyzed.status, 201);
-  const checks = analyzed.body.analysis.findings.map((f) => f.check);
-  assert.ok(checks.includes('vocabulary.forbidden_term'));
-  assert.ok(checks.includes('grammar.subject_verb_agreement'));
-  assert.ok(analyzed.body.analysis.overallScore < 100);
+  // Optimize: unambiguous fixes + plain wording; the ambiguous "recieve" is left alone
+  const optimized = await call('POST', `/documents/${id}/optimize`, { cookie });
+  assert.equal(optimized.status, 200);
+  const doc = optimized.body.document;
+  assert.equal(doc.original.text, SAMPLE);
+  assert.equal(doc.optimized.text, 'We were happy with the results. Please recieve the report to use it.');
+  assert.equal(doc.optimized.analysis.grammar.issueCount, 1);
+  assert.ok(doc.optimized.analysis.grammar.score > original.grammar.score);
+  assert.equal(doc.status, 'awaiting_review');
+  assert.equal(optimized.body.optimization.skippedSuggestions, 1);
 
-  // unchanged content -> cached result
-  const again = await call('POST', `/documents/${doc.id}/analyze`, { token, body: {} });
-  assert.equal(again.body.cached, true);
+  // Approving a stale version is refused
+  const stale = await call('PATCH', `/documents/${id}/review`, { cookie, body: { action: 'approve', versionId: '000000000000000000000000' } });
+  assert.equal(stale.status, 409);
 
-  // optimize
-  const optimized = await call('POST', `/documents/${doc.id}/optimize`, { token });
-  assert.equal(optimized.status, 201);
-  const opt = optimized.body.optimization;
-  assert.equal(opt.changes.length, 2);
+  // Approve the exact version shown
+  const approved = await call('PATCH', `/documents/${id}/review`, { cookie, body: { action: 'approve', versionId: doc.optimized.versionId } });
+  assert.equal(approved.status, 200);
+  assert.equal(approved.body.document.status, 'approved');
+  assert.equal(approved.body.document.approvedVersionId, doc.optimized.versionId);
 
-  // apply with pending changes -> 409
-  assert.equal((await call('POST', `/optimizations/${opt.id}/apply`, { token })).status, 409);
+  const txt = await call('GET', `/documents/${id}/export?format=txt`, { cookie });
+  assert.equal(txt.status, 200);
+  assert.equal(txt.body.toString('utf8'), doc.optimized.text);
+  assert.match(txt.headers.get('content-disposition'), /Report-approved\.txt/);
 
-  // review: approve the first, edit the second
-  const [first, second] = opt.changes;
-  await call('PATCH', `/optimizations/${opt.id}/changes/${first.changeId}`, { token, body: { status: 'approved' } });
-  const edited = await call('POST', `/optimizations/${opt.id}/review`, {
-    token,
-    body: { changes: [{ changeId: second.changeId, status: 'edited', editedText: 'We were ready to launch.' }] },
-  });
-  assert.equal(edited.status, 200);
-  assert.equal((await call('POST', `/optimizations/${opt.id}/apply`, { token: other })).status, 404);
-
-  // apply
-  const applied = await call('POST', `/optimizations/${opt.id}/apply`, { token });
-  assert.equal(applied.status, 200);
-  const final = applied.body.document;
-  assert.equal(final.status, 'approved');
-  assert.equal(final.currentContent, `# Launch\n\n${first.proposedText}\n\nWe were ready to launch.`);
-  assert.equal(final.originalContent, doc.originalContent, 'original content is never overwritten');
-
-  // a second apply is refused
-  assert.equal((await call('POST', `/optimizations/${opt.id}/apply`, { token })).status, 409);
-
-  // downloads: applied document in the source format (paste -> docx), PDF, one section, original, change report
-  const download = (path, t = token) => fetch(base + path, { headers: { Authorization: `Bearer ${t}` } });
-  const docx = await download(`/documents/${doc.id}/export?format=source`);
+  const docx = await call('GET', `/documents/${id}/export?format=docx`, { cookie });
   assert.equal(docx.status, 200);
-  assert.match(docx.headers.get('content-disposition'), /Launch post\.docx/);
-  assert.equal(Buffer.from(await docx.arrayBuffer()).subarray(0, 2).toString(), 'PK');
-  const pdf = await download(`/documents/${doc.id}/export?format=pdf`);
-  assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0, 4).toString(), '%PDF');
-  const section = await (await download(`/documents/${doc.id}/export?format=md&section=sec_01`)).text();
-  assert.equal(section, final.currentContent);
-  const original = await (await download(`/documents/${doc.id}/export?format=md&version=original`)).text();
-  assert.equal(original, doc.originalContent);
-  assert.equal((await download(`/documents/${doc.id}/export?format=pdf`, other)).status, 404);
-  const report = await (await download(`/optimizations/${opt.id}/report?format=md`)).text();
-  assert.match(report, /# Change report: Launch post/);
-  assert.match(report, /## Launch/);
-  assert.match(report, /After: We were ready to launch\./);
+  assert.equal(docx.body.subarray(0, 2).toString('latin1'), 'PK');
+
+  assert.equal((await call('GET', `/documents/${id}/export?format=pdf`, { cookie })).status, 400);
+
+  // Editing an approved document resets approval until the new version is reviewed
+  const edited = await call('PUT', `/documents/${id}/draft`, { cookie, body: { text: 'We were happy with the results. Please receive the report.' } });
+  assert.equal(edited.status, 200);
+  assert.equal(edited.body.document.status, 'awaiting_review');
+  assert.equal(edited.body.document.approvedVersionId, null);
+  assert.equal(edited.body.document.optimized.source, 'edit');
+  assert.equal(edited.body.document.optimized.analysis.grammar.issueCount, 0);
+  assert.equal(edited.body.document.versions.length, 2);
+  assert.equal((await call('GET', `/documents/${id}/export?format=txt`, { cookie })).status, 409);
+
+  // Edit and approve in one step
+  const editApprove = await call('PATCH', `/documents/${id}/review`, { cookie, body: { action: 'edit_approve', text: 'Final approved text.' } });
+  assert.equal(editApprove.status, 200);
+  assert.equal(editApprove.body.document.status, 'approved');
+  assert.equal(editApprove.body.document.versions.length, 3);
+  const finalTxt = await call('GET', `/documents/${id}/export?format=txt`, { cookie });
+  assert.equal(finalTxt.body.toString('utf8'), 'Final approved text.');
+
+  // Dashboard stats and history
+  const list = await call('GET', '/documents', { cookie });
+  assert.equal(list.status, 200);
+  assert.equal(list.body.stats.total, 1);
+  assert.equal(list.body.stats.approved, 1);
+  assert.equal(list.body.documents[0].scores.originalGrammar, original.grammar.score);
+  assert.equal(list.body.documents[0].original, undefined);
 });
 
-test('brand: sources -> learn -> approve rules -> brand-aware analysis with claims', async (t) => {
+test('reject keeps the original and blocks download', async (t) => {
   if (!available) return t.skip('MongoDB not reachable');
-  const token = await signup('brand@example.com');
+  const cookie = await registerUser('reject@example.com');
 
-  const brand = (await call('POST', '/brands', { token, body: { name: 'Acme' } })).body.brand;
-  const source = await call('POST', `/brands/${brand.id}/sources`, {
-    token,
-    body: {
-      type: 'text',
-      name: 'Brand guide',
-      content:
-        'Avoid buzzwords such as "synergy" and "leverage". Use "customers" instead of "clients".\n\n' +
-        'Customers experienced a 37% improvement in efficiency after adopting the product.\n\n' +
-        'We write for you and we keep it simple, so you always know what to do next.',
-    },
-  });
-  assert.equal(source.status, 201);
-  assert.equal(source.body.source.status, 'processed');
+  const { body } = await call('POST', '/documents/from-text', { cookie, body: { text: SAMPLE } });
+  const id = body.document.id;
+  assert.equal(body.document.title, 'We was happy with teh results Please recieve');
 
-  const learned = await call('POST', `/brands/${brand.id}/learn`, { token });
-  assert.equal(learned.status, 200);
-  assert.ok(learned.body.observations.some((o) => o.origin === 'explicit'));
-  const suggested = learned.body.suggestedRules;
-  assert.ok(suggested.every((r) => r.status === 'suggested'));
+  // Review before optimizing is refused
+  assert.equal((await call('PATCH', `/documents/${id}/review`, { cookie, body: { action: 'reject' } })).status, 409);
 
-  // learning again does not duplicate suggestions
-  assert.equal((await call('POST', `/brands/${brand.id}/learn`, { token })).body.suggestedRules.length, 0);
+  await call('POST', `/documents/${id}/optimize`, { cookie });
+  const rejected = await call('PATCH', `/documents/${id}/review`, { cookie, body: { action: 'reject' } });
+  assert.equal(rejected.status, 200);
+  assert.equal(rejected.body.document.status, 'rejected');
+  assert.equal(rejected.body.document.original.text, SAMPLE);
+  assert.equal((await call('GET', `/documents/${id}/export?format=txt`, { cookie })).status, 409);
+  assert.equal((await call('PATCH', `/documents/${id}/review`, { cookie, body: { action: 'maybe' } })).status, 400);
+});
 
-  // approve the vocabulary rules
-  for (const rule of suggested.filter((r) => r.category === 'vocabulary')) {
-    const res = await call('PATCH', `/brands/${brand.id}/rules/${rule.id}`, { token, body: { status: 'active' } });
-    assert.equal(res.body.rule.status, 'active');
-  }
-  // invalid manual rule is rejected with a clear message
-  const bad = await call('POST', `/brands/${brand.id}/rules`, { token, body: { name: 'x', type: 'tone', configuration: { allowed: ['angry'] } } });
-  assert.equal(bad.status, 400);
+test('users can only access their own documents', async (t) => {
+  if (!available) return t.skip('MongoDB not reachable');
+  const owner = await registerUser('owner@example.com');
+  const other = await registerUser('other@example.com');
 
-  const doc = (
-    await call('POST', '/documents', {
-      token,
-      body: { title: 'Pitch', content: 'Our clients love the synergy. Our product improves efficiency by 50%.', brandId: brand.id },
-    })
-  ).body.document;
+  const { body } = await call('POST', '/documents/from-text', { cookie: owner, body: { text: SAMPLE } });
+  const id = body.document.id;
 
-  const analysis = (await call('POST', `/documents/${doc.id}/analyze`, { token, body: {} })).body.analysis;
-  const byCheck = (c) => analysis.findings.filter((f) => f.check === c);
-  assert.ok(byCheck('vocabulary.forbidden_term').some((f) => f.text === 'synergy' && f.ruleId));
-  assert.ok(byCheck('vocabulary.preferred_term').some((f) => f.replacement === 'customers'));
-  assert.equal(byCheck('claim.mismatch').length, 1);
-  assert.equal(analysis.brandId, brand.id);
+  assert.equal((await call('GET', `/documents/${id}`, { cookie: other })).status, 404);
+  assert.equal((await call('POST', `/documents/${id}/analyze`, { cookie: other })).status, 404);
+  assert.equal((await call('POST', `/documents/${id}/optimize`, { cookie: other })).status, 404);
+  assert.equal((await call('PATCH', `/documents/${id}/review`, { cookie: other, body: { action: 'reject' } })).status, 404);
+  assert.equal((await call('GET', `/documents/${id}/export?format=txt`, { cookie: other })).status, 404);
+  assert.equal((await call('GET', '/documents/not-an-id', { cookie: other })).status, 404);
+
+  const list = await call('GET', '/documents', { cookie: other });
+  assert.equal(list.body.stats.total, 0);
+  assert.equal((await call('GET', `/documents/${id}`, { cookie: owner })).status, 200);
 });

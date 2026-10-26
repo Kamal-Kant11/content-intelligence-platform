@@ -1,16 +1,14 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Route, Routes } from 'react-router-dom';
 import { GuestRoute, ProtectedRoute } from './components/RouteGuards.jsx';
+import AppLayout from './components/AppLayout.jsx';
 import Home from './pages/Home.jsx';
 import Signup from './pages/Signup.jsx';
 import Login from './pages/Login.jsx';
-import FirstUpload from './pages/FirstUpload.jsx';
-import Dashboard from './pages/Dashboard.jsx';
-import NewDocument from './pages/NewDocument.jsx';
-import DocumentView from './pages/DocumentView.jsx';
-import ReviewPage from './pages/ReviewPage.jsx';
-import Brands from './pages/Brands.jsx';
-import BrandView from './pages/BrandView.jsx';
-import Models from './pages/Models.jsx';
+import Portal from './pages/Portal.jsx';
+import NewContent from './pages/NewContent.jsx';
+import History from './pages/History.jsx';
+import DocumentResults from './pages/DocumentResults.jsx';
+import Compare from './pages/Compare.jsx';
 import NotFound from './pages/NotFound.jsx';
 
 export default function App() {
@@ -24,15 +22,13 @@ export default function App() {
       </Route>
 
       <Route element={<ProtectedRoute />}>
-        <Route path="/onboarding" element={<FirstUpload />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/documents/new" element={<NewDocument />} />
-        <Route path="/upload" element={<Navigate to="/documents/new?tab=file" replace />} />
-        <Route path="/documents/:id" element={<DocumentView />} />
-        <Route path="/documents/:id/review/:optimizationId" element={<ReviewPage />} />
-        <Route path="/brands" element={<Brands />} />
-        <Route path="/brands/:id" element={<BrandView />} />
-        <Route path="/models" element={<Models />} />
+        <Route element={<AppLayout />}>
+          <Route path="/dashboard" element={<Portal />} />
+          <Route path="/new" element={<NewContent />} />
+          <Route path="/documents" element={<History />} />
+          <Route path="/documents/:id" element={<DocumentResults />} />
+          <Route path="/documents/:id/compare" element={<Compare />} />
+        </Route>
       </Route>
 
       <Route path="*" element={<NotFound />} />

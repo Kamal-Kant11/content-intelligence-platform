@@ -1,25 +1,33 @@
 import { Router } from 'express';
+import {
+  analyzeDocument,
+  createFromText,
+  createFromUpload,
+  createFromUrl,
+  exportDocument,
+  getDocument,
+  listDocuments,
+  optimizeDocument,
+  reviewDocument,
+  saveDraft,
+} from '../controllers/documentController.js';
 import { protect } from '../middleware/auth.js';
 import upload from '../middleware/upload.js';
-import * as c from '../controllers/documentController.js';
 
 const router = Router();
 
-router.use(protect); // login required; runs before multer so nothing is saved for guests
+router.use(protect);
 
-router.post('/', c.createDocument); // write / paste / url
-router.post('/upload', upload, c.uploadDocument); // file
-router.get('/', c.getDocuments);
-router.get('/:id', c.getDocument);
-router.get('/:id/export', c.exportDocument); // ?format=source|docx|pdf|txt|md&version=current|original&section=sec_01
-router.patch('/:id', c.updateDocument);
-router.delete('/:id', c.deleteDocument);
+router.get('/', listDocuments);
+router.post('/upload', upload, createFromUpload);
+router.post('/from-url', createFromUrl);
+router.post('/from-text', createFromText);
 
-router.post('/:id/analyze', c.analyzeDocument);
-router.get('/:id/analysis', c.getAnalysis);
-
-router.post('/:id/optimize', c.optimizeDocument);
-router.get('/:id/optimizations', c.getOptimizations);
-router.get('/:id/optimizations/:optimizationId', c.getOptimization);
+router.get('/:id', getDocument);
+router.post('/:id/analyze', analyzeDocument);
+router.post('/:id/optimize', optimizeDocument);
+router.put('/:id/draft', saveDraft);
+router.patch('/:id/review', reviewDocument);
+router.get('/:id/export', exportDocument);
 
 export default router;

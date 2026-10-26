@@ -1,12 +1,9 @@
 import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
-import { config } from "../config/config.js";
 import User from "../models/User.js";
+import { clearAuthCookie, setAuthCookie } from "../middleware/auth.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
-const createToken = (userId) =>
-  jwt.sign({ id: userId }, config.jwtSecret, { expiresIn: "7d" });
 
 
 
@@ -51,7 +48,8 @@ export async function signup(req, res, next) {
     const passwordHash = await bcrypt.hash(password, 12);
     const user = await User.create({ name, email, passwordHash });
 
-    res.status(201).json({ token: createToken(user._id), user });
+    setAuthCookie(res, user._id);
+    res.status(201).json({ user });
   } catch (err) {
     if (err.code === 11000)
       return res
@@ -83,10 +81,16 @@ export async function login(req, res, next) {
     if (!ok)
       return res.status(401).json({ message: "Invalid email or password." });
 
-    res.json({ token: createToken(user._id), user });
+    setAuthCookie(res, user._id);
+    res.json({ user });
   } catch (err) {
     next(err);
   }
+}
+
+export function logout(_req, res) {
+  clearAuthCookie(res);
+  res.json({ message: "Logged out." });
 }
 
 export function getMe(req, res) {

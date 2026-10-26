@@ -1,31 +1,28 @@
-# AI Content Assurance Platform
+# ContentIQ
 
-Checks whether content is **well-written** (Content Quality) and **right for the brand** (Brand Intelligence), proposes an optimized version, and lets a person approve, reject or edit every change block by block.
+A simple content quality platform. Add content (file, website or pasted text), check **two parameters**:
+**grammar** and **readability**. Then generate an optimized draft, compare it with the original, approve or
+reject it, and download the approved version as TXT or DOCX.
 
-**Stack:** MongoDB · Express · React (Vite + Tailwind) · Node.js. All intelligence runs **locally**: deterministic engines plus small models you train yourself. No external AI API is called. See [backend/ml/README.md](backend/ml/README.md).
+**Stack:** MongoDB · Express · React (Vite + Tailwind) · Node.js
 
-```text
-Paste / Write / File / URL ─► Extract ─► Normalize ─► Blocks ─► Document
-                                                                   │
-                     ┌──────── Analysis ◄──────────────────────────┘
-                     │  grammar · readability · structure · vocabulary   (rules)
-                     │  voice / tone                                     (tone model)
-                     │  brand rules                                      (approved by a person)
-                     │  claims vs. approved sources                      (claim model + keyword search)
-                     ▼
-                 Findings ─► Score (app-owned) ─► Optimization ─► Block review ─► currentContent
-```
+| Parameter   | Method                                                                                   |
+| ----------- | ---------------------------------------------------------------------------------------- |
+| Grammar     | [LanguageTool](https://languagetool.org) server (a rule-based checker, not an ML model)  |
+| Readability | Flesch Reading Ease formula (a math formula, not ML), with a built-in syllable counter   |
 
-## Setup
+No LLM API and no trained ML models are used.
 
-You need Node.js 20+ and MongoDB (local, or MongoDB Atlas).
+## Setup (Windows PowerShell)
 
-```bash
+You need **Node.js 20+** and **MongoDB** (local, or a MongoDB Atlas connection string).
+
+```powershell
 # 1. Backend
 cd backend
 npm install
-cp .env.example .env        # Windows: copy .env.example .env   then edit MONGODB_URI and JWT_SECRET
-npm run train               # optional: the trained models are already in ml/models
+Copy-Item .env.example .env
+notepad .env                # set MONGODB_URI and a long random JWT_SECRET
 npm run dev                 # http://localhost:5000
 
 # 2. Frontend (new terminal)
@@ -34,115 +31,173 @@ npm install
 npm run dev                 # http://localhost:5173  (proxies /api to :5000)
 ```
 
-Check it's running: `GET http://localhost:5000/api/health` returns the database status and the loaded models.
+A long random `JWT_SECRET` can be generated with:
 
-## How to use it
+```powershell
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
 
-1. **Documents → New Content**: write, paste, upload (PDF/DOCX/TXT) or import a URL.
-2. **Analyze**: you get a score out of 100, a breakdown by category, and findings per block.
-3. **Sections**: every heading starts a section with its own score; findings are shown under each block.
-4. **Optimize**: proposed changes are built from the findings.
-5. **Review**: changes are grouped by section. Approve, reject or edit each block (or a whole section), then **Apply**. `originalContent` is never changed; `currentContent` holds the accepted version.
-6. **Download**: the updated document in the same format you uploaded (or DOCX / PDF / TXT / Markdown), one section, the original, or a change report.
-7. **Brands**: add sources (guidelines, approved content), select **Learn**, then accept or reject the suggested rules. Pick the brand on a document and analyze again to get voice, rule and claim findings.
+Check that everything is running: open `http://localhost:5000/api/health`. It reports `database` and
+`grammarService` (LanguageTool) as `up` or `down`.
+
+## LanguageTool (grammar service)
+
+The server is set with `LANGUAGETOOL_URL` in `backend/.env`.
+
+- **Public API (default):** `https://api.languagetool.org`. Nothing to install, but it is rate-limited
+  (about 20 requests per minute) and **your text is sent to languagetool.org**.
+- **Your own server (recommended for private content):** needs Java 17+.
+
+  ```powershell
+  # Download and unzip LanguageTool (about 250 MB)
+  Invoke-WebRequest https://languagetool.org/download/LanguageTool-stable.zip -OutFile LanguageTool.zip
+  Expand-Archive LanguageTool.zip -DestinationPath .
+  cd LanguageTool-*
+  java -cp languagetool-server.jar org.languagetool.server.HTTPServer --port 8081
+  ```
+
+  Or with Docker: `docker run -d -p 8081:8010 erikvl87/languagetool`.
+
+  Then set `LANGUAGETOOL_URL=http://localhost:8081` in `backend/.env` and restart the backend.
+
+**When LanguageTool is unavailable:** analysis and optimization return **503** with a message that says
+what to fix (server not reachable, or rate limit reached). Nothing is saved half-way, and you can retry.
+Everything else (history, comparison, approval, downloads) keeps working.
+
+## How it works
+
+1. **Add content.** The New analysis page has three tabs: *Upload File* (PDF/DOCX/TXT, max 5 MB), *Website
+   URL* and *Paste Text*. Each one creates a document and shows the extracted text for confirmation.
+2. **Analyze.** The same pipeline runs for every input:
+   - **Grammar:** every LanguageTool issue with message, rule ID, category, start/end position and
+     suggestions. **Score** = `100 − (weighted issues per 1,000 words)`, clamped to 0–100. Grammar,
+     spelling and repeated words weigh 2; typos and inconsistencies 1; style and whitespace 0.5. Texts
+     under 100 words count as 100 words. *This is our own estimate, not an official LanguageTool score.*
+   - **Readability:** raw Flesch Reading Ease `206.835 − 1.015 × words/sentence − 84.6 × syllables/word`,
+     display score (raw clamped to 0–100), words, sentences, average sentence length, average word length,
+     syllables per word, long sentences (over 25 words) and reading level. Higher means easier.
+3. **Optimize.** The original is never changed. The optimized draft is built by:
+   - applying LanguageTool fixes **only when there is exactly one suggestion** and the issue is
+     mechanical (spelling, grammar, typo, repeated word). Ambiguous fixes are left for you; on the
+     comparison page you can apply any suggestion with one click;
+   - fixed plain-wording rules (`in order to` → `to`, `utilize` → `use`, `prior to` → `before`, …);
+   - splitting sentences over 25 words at `;` or `, and/but/so` when both halves are full clauses.
+
+   The draft is then analyzed again with the same two methods. Scores are whatever is measured, and they
+   can stay the same or get worse.
+4. **Compare and review.** Original next to the editable optimized text, a scores table with changes,
+   highlighted word differences, the list of automatic changes, and the remaining issues. Then:
+   - **Approve optimized content** approves exactly the saved version on screen.
+   - **Edit and approve** saves your edited text as a new version, analyzes it and approves it.
+   - **Reject optimization** keeps the original and approves nothing.
+
+   Editing after approval resets the status to *Awaiting review*.
+5. **Download.** TXT or DOCX of the approved version only.
+
+## API
+
+All responses are JSON. Errors are always `{ "message": "..." }` with a matching status code (400
+validation, 401 not logged in, 404 not found or not yours, 409 conflict, 413 too large, 502/503 grammar
+service). Every `/api/documents` route requires login and only ever returns the caller's own documents.
+
+| Method | Path                                        | Body / query                                     | Notes                                        |
+| ------ | ------------------------------------------- | ------------------------------------------------ | -------------------------------------------- |
+| GET    | `/api/health`                               |                                                  | `{ status, database, grammarService }`       |
+| POST   | `/api/auth/register`                        | `{ name, email, password, confirmPassword }`     | Sets the HTTP-only login cookie (`/signup` also works) |
+| POST   | `/api/auth/login`                           | `{ email, password }`                            | Sets the login cookie                        |
+| POST   | `/api/auth/logout`                          |                                                  | Clears the cookie                            |
+| GET    | `/api/auth/me`                              |                                                  | `{ user }`                                   |
+| GET    | `/api/documents`                            |                                                  | `{ documents, stats }` (summaries, no text)  |
+| POST   | `/api/documents/upload`                     | multipart: `file`, `title?`                      | PDF, DOCX, TXT; real file type is checked    |
+| POST   | `/api/documents/from-url`                   | `{ url, title? }`                                | Public http(s) pages only (SSRF-protected)   |
+| POST   | `/api/documents/from-text`                  | `{ text, title? }`                               | Max 20,000 characters (`MAX_TEXT_CHARS`)     |
+| GET    | `/api/documents/:id`                        |                                                  | Full document                                |
+| POST   | `/api/documents/:id/analyze`                |                                                  | Analyzes the original text                   |
+| POST   | `/api/documents/:id/optimize`               |                                                  | New optimized version + its analysis         |
+| PUT    | `/api/documents/:id/draft`                  | `{ text }`                                       | Saves an edit as a new version, re-analyzed  |
+| PATCH  | `/api/documents/:id/review`                 | `{ action: "approve", versionId }` · `{ action: "edit_approve", text }` · `{ action: "reject" }` | |
+| GET    | `/api/documents/:id/export?format=txt\|docx` |                                                  | Approved version only (409 otherwise)        |
+
+A full document looks like:
+
+```jsonc
+{
+  "document": {
+    "id": "…", "title": "…", "sourceType": "file|url|text", "sourceName": "report.pdf",
+    "status": "draft|analyzed|awaiting_review|approved|rejected",
+    "scores": { "originalGrammar": 72, "originalReadability": 48, "optimizedGrammar": 90, "optimizedReadability": 55 },
+    "original": { "text": "…", "analysis": { "grammar": { "score", "issueCount", "issues": [ { "message", "ruleId", "category", "issueType", "start", "end", "text", "suggestions" } ] },
+                                             "readability": { "score", "fleschReadingEase", "wordCount", "sentenceCount", "avgSentenceLength", "avgWordLength", "avgSyllablesPerWord", "longSentenceCount", "level" },
+                                             "wordCount", "sentenceCount" } },
+    "optimized": { "versionId": "…", "source": "optimizer|edit", "text": "…", "analysis": { … }, "changes": [ { "type", "from", "to", "reason" } ] },
+    "versions": [ { "id", "source", "createdAt", "grammarScore", "readabilityScore", "wordCount" } ],
+    "currentVersionId": "…", "approvedVersionId": "…", "approvedAt": "…"
+  }
+}
+```
+
+## Security notes
+
+- Passwords are hashed with bcrypt (cost 12).
+- The JWT is stored in an **HTTP-only, SameSite=Strict** cookie (`Secure` when `NODE_ENV=production` or
+  `COOKIE_SECURE=true`).
+- **URL input:** only http/https on ports 80/443, no credentials in the URL. Every DNS answer is checked
+  at connect time, so localhost, private, link-local (cloud metadata), CGNAT, multicast and reserved
+  addresses are blocked, including through redirects. 10 s timeout, 2 MB limit, at most 5 redirects.
+- **Uploads:** kept in memory only (never written to disk), 5 MB limit, file signature checked (`%PDF-`,
+  DOCX zip), binary "TXT" rejected.
+- The original text is immutable in the database. Download filenames contain only the cleaned title.
+
+## Data model
+
+Two Mongoose models:
+
+- **User**: name, email, password hash.
+- **Document**: owner, title, source type and name, immutable `originalText`, `originalAnalysis`, a
+  `versions` array (each optimized or edited text with its analysis and changes, i.e. the revision
+  history), `currentVersionId`, `status`, `approvedVersionId`, `approvedAt`, score summary and
+  timestamps. Indexed by `{ user, updatedAt }` and `{ user, status }`.
+
+## Tests
+
+```powershell
+cd backend
+npm test
+```
+
+Unit tests cover grammar scoring and fixes, readability, the optimization rules, PDF/DOCX/TXT/HTML
+extraction, SSRF blocking and export. The API tests cover auth, analysis, optimization, approval,
+rejection, authorization and export, using a real MongoDB (database `contentiq_test`, dropped afterwards;
+skipped if MongoDB is not running) and a small fake LanguageTool, so no internet access is needed.
+
+Try the app with [examples/sample-content.txt](examples/sample-content.txt).
+
+## Limitations
+
+- English only (`LANGUAGETOOL_LANGUAGE`, default `en-US`). The readability formula is for English.
+- The grammar score is an internal estimate. The public LanguageTool API finds fewer issues than the
+  Premium version.
+- Readability rules are deliberately conservative: they cannot understand meaning, so they only make the
+  listed substitutions and clause splits. Every change is shown for review.
+- Scanned (image-only) PDFs have no text to extract (no OCR). Pages that render their text with
+  JavaScript, or that need a login, cannot be read from a URL; use Paste Text instead.
+- Documents are limited to 20,000 characters and 50 saved versions each.
 
 ## Project structure
 
 ```text
 backend/
-  ml/
-    data/*.jsonl            labelled training data (edit these to improve the models)
-    models/*.json           trained models, loaded at startup
-    train.js                npm run train
   src/
-    app.js / server.js      Express app / startup (DB, migration, models, listen)
-    config/config.js        env settings + MongoDB connection
-    routes/ controllers/    HTTP only: thin
-    services/               orchestration: document, analysis, optimization, brand, extraction, model
-    intelligence/           the actual logic, no Express/Mongo, unit-tested
-      normalize.js          normalization + block parsing
-      content_quality/      grammar, readability, structure, vocabulary
-      brand/                voice, rules, extraction (learning), ruleGeneration, ruleConfig
-      claims/analysis.js    claim detection + evidence comparison
-      scoring/scorer.js     findings -> score
-      rewrite/rewriter.js   findings -> proposed text
-      pipeline.js           runs every engine
-    ml/naiveBayes.js        the classifier
-    models/                 Mongoose: User, Document, Analysis, Optimization, Brand, Source, Observation, Rule
-  tests/                    node --test (unit + API integration)
+    app.js / server.js            Express app / startup (DB, listen)
+    config/config.js              env settings + MongoDB connection
+    analysis/                     grammar.js (LanguageTool + score + fixes), readability.js (Flesch), simplify.js (rules)
+    services/                     analysisService (shared pipeline), extractionService, safeFetch (SSRF), exportService
+    controllers/ routes/          auth, documents, health
+    middleware/                   auth.js (cookie JWT), upload.js (multer, memory)
+    models/                       User.js, Document.js
+  tests/                          node --test
 frontend/src/
-  pages/                    Dashboard, NewDocument, DocumentView, ReviewPage, Brands, BrandView, Models, auth pages
-  components/ api/ context/ utils/
+  pages/                          Home, Login, Signup, Portal (dashboard), NewContent, DocumentResults, Compare, History
+  components/ hooks/ api/ context/ utils/
+examples/sample-content.txt
 ```
-
-## Key design decisions (from the product spec)
-
-- **Blocks live inside the Document.** There is no Block collection or API. Blocks are created during normalization, never by analysis.
-- **No Version model.** `originalContent` is immutable (enforced in the model); `currentContent` is the latest accepted state.
-- **One Finding shape** for every engine: `category, severity, message, text, suggestion, confidence, blockId` (+ `ruleId`, `source: deterministic|model`, `evidence`).
-- **Finding ≠ suggestion ≠ optimization.** Findings explain the problem, the suggestion says what to do, and the optimization is a separate reviewed proposal.
-- **The score is application-owned:** `100 − 20·critical − 5·warning − 1·info`, weighted by confidence.
-- **Source → Observation → Rule → Finding** stay separate. Observations are `explicit` (the guideline says it) or `inferred` (the system noticed it) and keep their evidence. Rules start as `suggested` and only `active` + enabled rules affect analysis.
-- **Deterministic first.** Models are used only where rules can't judge (tone, claim detection).
-- **Cost control:** an analysis is cached by a hash of the content, brand knowledge, engine version and model versions.
-
-## API
-
-All routes except auth and health need `Authorization: Bearer <token>`. Every query is scoped to the logged-in user.
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/health`, `/api/health/models` | App, DB and model status / model metrics |
-| POST | `/api/auth/signup`, `/api/auth/login` | Returns `{ token, user }` |
-| GET | `/api/auth/me` | Current user |
-| POST | `/api/documents` | `{ title, contentType, sourceType: write\|paste\|url, content \| url, brandId? }` |
-| POST | `/api/documents/upload` | multipart `file` (+ `title`, `contentType`, `brandId`) |
-| GET / PATCH / DELETE | `/api/documents/:id` | Get / update title, contentType, brandId / delete |
-| GET | `/api/documents` | List |
-| POST | `/api/documents/:id/analyze` | `{ brandId?, force? }`: run (or reuse cached) analysis |
-| GET | `/api/documents/:id/analysis` | Latest analysis (+ `stale`) |
-| POST | `/api/documents/:id/optimize` | Create proposed changes from the latest analysis |
-| GET | `/api/documents/:id/optimizations[/:optimizationId]` | List / get |
-| PATCH | `/api/optimizations/:id/changes/:changeId` | `{ status: approved\|rejected\|edited\|pending, editedText? }` |
-| POST | `/api/optimizations/:id/review` | `{ changes: [...] }` bulk review |
-| POST | `/api/optimizations/:id/apply` | Assemble final content into `currentContent` |
-| GET | `/api/documents/:id/export` | Download. `format=source\|docx\|pdf\|txt\|md` (`source` = same as uploaded), `version=current\|original`, `section=sec_01` |
-| GET | `/api/optimizations/:id/report` | Change report (before / after / why, grouped by section). `format=docx\|pdf\|txt\|md` |
-| POST / GET | `/api/brands` | Create / list brands |
-| GET / PATCH / DELETE | `/api/brands/:id` | Profile (voice, key messages) |
-| POST / GET | `/api/brands/:id/sources` | Add (file, `{type:'text'}`, `{type:'url'}`) / list |
-| DELETE | `/api/brands/:id/sources/:sourceId` | Remove a source |
-| POST | `/api/brands/:id/learn` | Sources → observations → suggested rules → profile |
-| GET | `/api/brands/:id/observations` | Observations with evidence |
-| GET / POST | `/api/brands/:id/rules` | List (`?status=`) / add a manual (active) rule |
-| PATCH / DELETE | `/api/brands/:id/rules/:ruleId` | Accept / reject / edit / enable / delete |
-
-Rule types: `forbidden_term`, `preferred_term`, `required_term`, `sentence_length`, `passive_voice`, `pattern`, `tone`, `claim`, `custom_semantic`.
-
-## Tests
-
-```bash
-cd backend
-npm test
-```
-
-Unit tests cover block parsing, every engine, scoring, the classifier, brand learning, claims and the rewriter. `tests/api.test.js` runs the full flow (signup → document → analyze → optimize → review → apply, plus the brand flow and ownership checks) against a throwaway `ai_content_assurance_test` database. It is skipped if MongoDB isn't running.
-
-## Troubleshooting
-
-| Symptom | Cause | Fix |
-| --- | --- | --- |
-| Blank page; browser console shows `504 (Outdated Optimize Dep)` | Vite's dependency cache went stale (packages were installed or removed while `npm run dev` was running) | Stop the frontend and run `npm run dev:fresh` once |
-| `Startup failed: Port 5000 is already in use` | Another backend is still running (an old terminal, or a crashed `--watch` run) | Close it, or `netstat -ano \| findstr :5000` then `taskkill /PID <pid> /F` |
-| `Startup failed: Cannot connect to MongoDB` | MongoDB service is stopped | Start "MongoDB Server" in Windows Services, or `net start MongoDB` as administrator |
-| `Startup failed: Missing MONGODB_URI ...` | No `backend/.env` | `copy .env.example .env` in `backend/` and fill it in. `.env` is found from any folder you start in |
-| `npm run dev` says "Waiting for file changes before restarting" | The backend crashed; the real error is printed just above that line | Fix that error, then save any backend file (or restart) |
-| Frontend shows "Cannot reach the server" | Backend isn't running on port 5000 | Start the backend; check `http://localhost:5000/api/health` |
-
-## Known limits
-
-- Grammar covers common, high-confidence mistakes, not everything a full grammar checker would catch.
-- Passive voice, tone mismatches and unsupported claims are flagged, but the rewriter only applies safe mechanical fixes. Rewording is left to the reviewer through **Edit**.
-- The seed training data is small and generic (85% / 91.5% cross-validated accuracy). Add your own examples (see `backend/ml/README.md`).
-- `custom_semantic` rules are keyword-triggered. A true semantic check would need a semantic model.
-- Uploaded document files stay in `backend/uploads` (private). Brand source files are deleted after their text is extracted.

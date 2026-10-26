@@ -3,7 +3,7 @@ import Backdrop from '../components/Backdrop.jsx';
 
 export default function NotFound() {
   return (
-    <div className="relative flex min-h-screen items-center justify-center px-5">
+    <div className="relative flex min-h-screen items-center justify-center px-4">
       <Backdrop />
       <div className="text-center">
         <p className="text-sm font-medium text-indigo-300">404</p>

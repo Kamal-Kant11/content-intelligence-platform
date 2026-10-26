@@ -24,6 +24,9 @@ body {
   .btn-secondary {
     @apply btn border border-charcoal-600 bg-charcoal-800 text-slate-200 hover:bg-charcoal-700;
   }
+  .btn-success {
+    @apply btn bg-emerald-500 text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-400;
+  }
   .btn-danger {
     @apply btn border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20;
   }
@@ -37,6 +40,17 @@ body {
   .card {
     @apply rounded-2xl border border-charcoal-700 bg-charcoal-900/80 backdrop-blur;
   }
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-slate-300;
+  }
+  .text-gradient {
+    @apply bg-gradient-to-r from-indigo-300 via-violet-300 to-emerald-300 bg-clip-text text-transparent;
+  }
+}
+
+/* Native dropdown lists follow the dark theme. */
+select option {
+  @apply bg-charcoal-900 text-slate-100;
 }
 
 /* Subtle animated grid: one cheap background-position animation, no JS. */

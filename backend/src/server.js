@@ -1,8 +1,6 @@
 import mongoose from 'mongoose';
 import { config, connectDB } from './config/config.js';
 import { createApp } from './app.js';
-import { migrateLegacyDocuments } from './db/migrations.js';
-import { loadModels } from './services/modelService.js';
 
 // Log anything that would otherwise crash the process silently.
 process.on('unhandledRejection', (err) => console.error('Unhandled promise rejection:', err));
@@ -47,8 +45,6 @@ process.once('SIGTERM', () => shutdown('SIGTERM'));
 
 try {
   await connectDB();
-  await migrateLegacyDocuments();
-  await loadModels();
   server = await listen(createApp(), Number(config.port));
   console.log(`API running on http://localhost:${config.port}`);
 } catch (err) {

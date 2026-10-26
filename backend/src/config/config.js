@@ -15,19 +15,21 @@ export const config = {
   mongoUri: process.env.MONGODB_URI,
   jwtSecret: process.env.JWT_SECRET,
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
-  uploadDir: path.join(backendRoot, 'uploads'), // private folder, never served publicly
-  maxFileSize: 10 * 1024 * 1024, // 10 MB
+  // The login cookie is sent over HTTPS only in production (or when forced with COOKIE_SECURE=true).
+  cookieSecure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production',
+  logRequests: process.env.NODE_ENV !== 'test',
 
-  // Local ML models (trained with `npm run train`, see backend/ml/README.md)
-  modelDir: process.env.MODEL_DIR || path.join(backendRoot, 'ml', 'models'),
+  // LanguageTool server used for grammar checking. The public API works out of the box
+  // (rate-limited, text is sent to languagetool.org); a local server is http://localhost:8081.
+  languageToolUrl: (process.env.LANGUAGETOOL_URL || 'https://api.languagetool.org').replace(/\/+$/, ''),
+  languageToolLanguage: process.env.LANGUAGETOOL_LANGUAGE || 'en-US',
+  languageToolTimeoutMs: 20_000,
 
-  // Bump when an intelligence engine changes, so cached analyses are recomputed.
-  engineVersion: '1.1.0',
-
-  // URL input
+  // Input limits
+  maxTextChars: Number(process.env.MAX_TEXT_CHARS) || 20_000,
+  maxFileBytes: 5 * 1024 * 1024,
   urlFetchTimeoutMs: 10_000,
   urlMaxBytes: 2 * 1024 * 1024,
-  allowPrivateUrls: process.env.ALLOW_PRIVATE_URLS === 'true',
 };
 
 // Fails early with a message that says what to fix.

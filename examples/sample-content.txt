@@ -1,0 +1,5 @@
+Our team have been working hard on the new release. In order to utilize the new features, users must first update there settings, and they should also review the documentation that explains every option in considerable detail before they commence any migration work.
+
+The update includes numerous improvements to performance. It also fix a bug that caused crashes on older devices. We was very happy with teh results, and approximately ninety percent of beta testers said the app feels faster.
+
+Prior to installing the update, make a backup of your data. If you are able to, close other apps in order to free up memory.

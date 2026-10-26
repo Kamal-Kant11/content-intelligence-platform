@@ -42,7 +42,7 @@ export default function Signup() {
     setLoading(true);
     try {
       await signup({ ...values, name: values.name.trim(), email: values.email.trim() });
-      navigate('/onboarding', { replace: true });
+      navigate('/dashboard', { replace: true });
     } catch (err) {
       setFormError(getErrorMessage(err));
     } finally {
@@ -53,11 +53,11 @@ export default function Signup() {
   return (
     <AuthLayout
       title="Create your account"
-      subtitle="Start preparing your content for quality assurance."
+      subtitle="Check grammar and readability, then download approved content."
       footer={
         <>
           Already have an account?{' '}
-          <Link to="/login" className="font-medium text-indigo-300 hover:text-indigo-200">
+          <Link to="/login" className="font-medium text-indigo-300 hover:text-violet-300">
             Login
           </Link>
         </>
@@ -73,7 +73,7 @@ export default function Signup() {
         <FormField label="Email" id="email" type="email" autoComplete="email" value={values.email} onChange={set('email')} error={errors.email} />
         <FormField label="Password" id="password" type="password" autoComplete="new-password" value={values.password} onChange={set('password')} error={errors.password} />
         <FormField label="Confirm password" id="confirmPassword" type="password" autoComplete="new-password" value={values.confirmPassword} onChange={set('confirmPassword')} error={errors.confirmPassword} />
-        <p className="text-xs text-slate-500">At least 8 characters, including a letter and a number.</p>
+        <p className="text-xs text-slate-400">At least 8 characters, including a letter and a number.</p>
         <button type="submit" className="btn-primary w-full" disabled={loading}>
           {loading ? (
             <>

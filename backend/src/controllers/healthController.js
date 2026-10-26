@@ -1,8 +1,10 @@
 import mongoose from 'mongoose';
 import { config } from '../config/config.js';
-import { modelInfo } from '../services/modelService.js';
+import { pingLanguageTool } from '../analysis/grammar.js';
 
-// GET /api/health - confirms the app, MongoDB and the local models are working (PDF Task 1.4).
+// GET /api/health - confirms the app, MongoDB and the grammar service (LanguageTool) are working.
+// The HTTP status follows the database only: LanguageTool is an external service, and the app
+// still serves documents, history and downloads while it is down.
 export async function health(_req, res) {
   let database = 'down';
   try {
@@ -13,12 +15,12 @@ export async function health(_req, res) {
   } catch {
     database = 'down';
   }
-  const models = modelInfo().map(({ name, version, metrics }) => ({ name, version, accuracy: metrics?.accuracy ?? null }));
-  const ok = database === 'up';
-  res.status(ok ? 200 : 503).json({ status: ok ? 'ok' : 'degraded', database, engineVersion: config.engineVersion, models });
-}
-
-// GET /api/health/models - full metadata of the trained models (labels, dataset, metrics).
-export function models(_req, res) {
-  res.json({ models: modelInfo() });
+  const grammarService = await pingLanguageTool();
+  const ok = database === 'up' && grammarService === 'up';
+  res.status(database === 'up' ? 200 : 503).json({
+    status: ok ? 'ok' : 'degraded',
+    database,
+    grammarService,
+    languageToolUrl: config.languageToolUrl,
+  });
 }
