@@ -2,7 +2,6 @@ import mongoose from 'mongoose';
 import { config, connectDB } from './config/config.js';
 import { createApp } from './app.js';
 
-// Log anything that would otherwise crash the process silently.
 process.on('unhandledRejection', (err) => console.error('Unhandled promise rejection:', err));
 
 function listen(app, port) {
@@ -27,8 +26,6 @@ function listen(app, port) {
 
 let server;
 
-// Close the HTTP server and MongoDB on Ctrl+C or when node --watch restarts,
-// so the port is free again immediately.
 async function shutdown(signal) {
   console.log(`${signal} received, shutting down...`);
   const force = setTimeout(() => process.exit(1), 5000).unref();

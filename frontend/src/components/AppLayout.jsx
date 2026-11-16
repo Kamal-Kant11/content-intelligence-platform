@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 
 const NAV = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/new', label: 'New analysis', icon: PlusCircle },
+  { to: '/new', label: 'Add content', icon: PlusCircle },
   { to: '/documents', label: 'History', icon: History, end: true },
 ];
 
@@ -15,7 +15,6 @@ const linkClass = ({ isActive }) =>
     isActive ? 'bg-indigo-500/10 text-indigo-300' : 'text-slate-300 hover:bg-charcoal-800/70 hover:text-white'
   }`;
 
-// Shell for every signed-in page: top bar with navigation and sign out.
 export default function AppLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();

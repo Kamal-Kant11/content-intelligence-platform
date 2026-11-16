@@ -48,12 +48,10 @@ body {
   }
 }
 
-/* Native dropdown lists follow the dark theme. */
 select option {
   @apply bg-charcoal-900 text-slate-100;
 }
 
-/* Subtle animated grid: one cheap background-position animation, no JS. */
 .grid-bg {
   background-image:
     linear-gradient(to right, rgba(148, 163, 184, 0.07) 1px, transparent 1px),

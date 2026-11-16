@@ -1,114 +1,122 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CheckCircle2, ClipboardList, FileText, PlusCircle } from 'lucide-react';
+import { BarChart3, FileText, PlusCircle } from 'lucide-react';
 import { api, getErrorMessage } from '../api/client.js';
+import ExtractedText from '../components/ExtractedText.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
-import { Alert, EmptyState, PageHeader, Score, Spinner, StatusBadge } from '../components/ui.jsx';
-import { formatDate, SOURCE_LABEL } from '../utils/format.js';
+import { Alert, EmptyState, PageHeader, Spinner } from '../components/ui.jsx';
+import { formatBytes, formatDate } from '../utils/format.js';
 
-function StatCard({ icon: Icon, label, value, tone }) {
-  return (
-    <div className="card flex items-center gap-4 p-5">
-      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${tone}`}>
-        <Icon size={20} />
-      </span>
-      <div>
-        <p className="text-sm text-slate-400">{label}</p>
-        <p className="text-2xl font-semibold text-white">{value}</p>
-      </div>
-    </div>
-  );
-}
+const isPdf = (doc) => doc.fileName.toLowerCase().endsWith('.pdf');
 
-// The dashboard a signed-in user sees.
 export default function Portal() {
   const { user } = useAuth();
-  const [data, setData] = useState(null);
+  const [documents, setDocuments] = useState(null);
   const [error, setError] = useState('');
+  const [openTextId, setOpenTextId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
+
+  async function remove(doc) {
+    if (!window.confirm(`Delete "${doc.title}"? This cannot be undone.`)) return;
+    setDeletingId(doc.id);
+    try {
+      await api.delete(`/documents/${doc.id}`);
+      setDocuments((list) => list.filter((d) => d.id !== doc.id));
+    } catch (err) {
+      setError(getErrorMessage(err, 'Could not delete the document.'));
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   useEffect(() => {
     api
       .get('/documents')
-      .then((res) => setData(res.data))
+      .then((res) => setDocuments(res.data.documents))
       .catch((err) => setError(getErrorMessage(err, 'Could not load your documents.')));
   }, []);
 
-  const recent = data?.documents.filter((d) => d.scores.originalGrammar !== null).slice(0, 5) ?? [];
+  const recent = documents?.slice(0, 5) ?? [];
 
   return (
     <div className="space-y-8">
       <PageHeader
         title={`Welcome, ${user?.name?.split(' ')[0] || 'there'}`}
-        subtitle="Check grammar and readability, review the optimized draft and download the approved version."
+        subtitle="Upload a PDF, DOCX or TXT file to add it to your documents."
         actions={
           <Link to="/new" className="btn-primary">
-            <PlusCircle size={16} /> New analysis
+            <PlusCircle size={16} /> Upload file
           </Link>
         }
       />
 
       <Alert>{error}</Alert>
-      {!data && !error && <Spinner label="Loading your dashboard…" />}
+      {!documents && !error && <Spinner label="Loading your dashboard…" />}
 
-      {data && (
-        <>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <StatCard icon={FileText} label="Total documents" value={data.stats.total} tone="bg-indigo-500/10 text-indigo-300" />
-            <StatCard icon={ClipboardList} label="Drafts awaiting review" value={data.stats.awaitingReview} tone="bg-amber-500/10 text-amber-300" />
-            <StatCard icon={CheckCircle2} label="Approved documents" value={data.stats.approved} tone="bg-emerald-500/10 text-emerald-300" />
+      {documents && (
+        <section className="card">
+          <div className="flex items-center justify-between border-b border-charcoal-800 px-5 py-4">
+            <h2 className="font-semibold text-white">Recent documents ({documents.length})</h2>
+            {documents.length > 0 && (
+              <Link to="/documents" className="text-sm font-medium text-indigo-300 hover:text-violet-300">
+                View all
+              </Link>
+            )}
           </div>
-
-          <section className="card">
-            <div className="flex items-center justify-between border-b border-charcoal-800 px-5 py-4">
-              <h2 className="font-semibold text-white">Recent analyses</h2>
-              {data.stats.total > 0 && (
-                <Link to="/documents" className="inline-flex items-center gap-1 text-sm font-medium text-indigo-300 hover:text-violet-300">
-                  View all <ArrowRight size={14} />
+          {recent.length === 0 ? (
+            <EmptyState
+              icon={FileText}
+              title="No documents yet"
+              text="Upload a PDF, DOCX or TXT file to add your first document."
+              action={
+                <Link to="/new" className="btn-primary">
+                  Upload your first file
                 </Link>
-              )}
-            </div>
-            {recent.length === 0 ? (
-              <EmptyState
-                icon={FileText}
-                title={data.stats.total ? 'No analyses yet' : 'No documents yet'}
-                text={
-                  data.stats.total
-                    ? 'Open a document and run the analysis to see its scores here.'
-                    : 'Upload a file, enter a website URL or paste text to get your first grammar and readability scores.'
-                }
-                action={
-                  <Link to={data.stats.total ? '/documents' : '/new'} className="btn-primary">
-                    {data.stats.total ? 'Open history' : 'Start your first analysis'}
-                  </Link>
-                }
-              />
-            ) : (
-              <ul className="divide-y divide-charcoal-800">
-                {recent.map((doc) => (
-                  <li key={doc.id}>
-                    <Link to={`/documents/${doc.id}`} className="flex flex-col gap-2 px-5 py-4 transition hover:bg-charcoal-800/70 sm:flex-row sm:items-center sm:justify-between">
+              }
+            />
+          ) : (
+            <ul className="divide-y divide-charcoal-800">
+              {recent.map((doc) => {
+                const open = openTextId === doc.id;
+                return (
+                  <li key={doc.id} className="px-5 py-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="min-w-0">
                         <p className="truncate font-medium text-white">{doc.title}</p>
                         <p className="mt-0.5 text-xs text-slate-400">
-                          {SOURCE_LABEL[doc.sourceType]} · {doc.wordCount} words · {formatDate(doc.updatedAt)}
+                          {doc.hasFile ? `${doc.fileName} · ${formatBytes(doc.size)}` : 'Typed text'} · {formatDate(doc.createdAt)}
                         </p>
                       </div>
-                      <div className="flex shrink-0 items-center gap-4 text-sm">
-                        <span className="text-slate-400">
-                          Grammar <Score value={doc.scores.optimizedGrammar ?? doc.scores.originalGrammar} />
-                        </span>
-                        <span className="text-slate-400">
-                          Readability <Score value={doc.scores.optimizedReadability ?? doc.scores.originalReadability} />
-                        </span>
-                        <StatusBadge status={doc.status} />
+                      <div className="flex shrink-0 flex-wrap gap-2">
+                        {(isPdf(doc) || doc.hasText) && (
+                          <button type="button" onClick={() => setOpenTextId(open ? null : doc.id)} className="btn-secondary">
+                            Extract text
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => remove(doc)}
+                          disabled={deletingId === doc.id}
+                          className="btn-secondary text-red-300 hover:text-red-200"
+                        >
+                          {deletingId === doc.id ? 'Deleting…' : 'Delete'}
+                        </button>
+                        <Link to={`/documents/${doc.id}/analysis`} className="btn-secondary">
+                          <BarChart3 size={15} /> Analysis
+                        </Link>
                       </div>
-                    </Link>
+                    </div>
+                    {open && (
+                      <div className="mt-4">
+                        <ExtractedText docId={doc.id} fileName={doc.hasFile ? doc.fileName : ''} onClose={() => setOpenTextId(null)} />
+                      </div>
+                    )}
                   </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </>
+                );
+              })}
+            </ul>
+          )}
+        </section>
       )}
     </div>
   );

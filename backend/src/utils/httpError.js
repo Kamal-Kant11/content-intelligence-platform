@@ -1,5 +1,3 @@
-// Error with an HTTP status. The central error handler always sends `message`
-// to the client for these errors, including 502/503 from external services.
 export class HttpError extends Error {
   constructor(status, message) {
     super(message);

@@ -1,7 +1,6 @@
 import { AlertCircle, CheckCircle2, Info, Loader2, TriangleAlert } from 'lucide-react';
-import { STATUS, scoreTone } from '../utils/format.js';
+import { scoreTone } from '../utils/format.js';
 
-// Circular score gauge.
 export function ScoreRing({ score, size = 96, stroke = 8, label = '/ 100' }) {
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
@@ -34,16 +33,6 @@ export function ScoreRing({ score, size = 96, stroke = 8, label = '/ 100' }) {
   );
 }
 
-// A score number colored green / amber / red.
-export function Score({ value }) {
-  return <span className={`font-semibold tabular-nums ${scoreTone(value).text}`}>{value ?? '—'}</span>;
-}
-
-export function StatusBadge({ status }) {
-  const s = STATUS[status] || STATUS.draft;
-  return <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${s.className}`}>{s.label}</span>;
-}
-
 const ALERT_STYLES = {
   error: ['border-red-500/30 bg-red-500/10 text-red-300', AlertCircle],
   warning: ['border-amber-500/30 bg-amber-500/10 text-amber-300', TriangleAlert],
@@ -70,7 +59,6 @@ export function Spinner({ label = 'Loading…' }) {
   );
 }
 
-// Button content that swaps to a spinner while busy.
 export function Busy({ busy, label, busyLabel, icon: Icon }) {
   if (busy) {
     return (
@@ -99,15 +87,6 @@ export function EmptyState({ icon: Icon, title, text, action }) {
       {action && <div className="mt-5">{action}</div>}
     </div>
   );
-}
-
-// "+12" in green, "-5" in red, "±0" in grey. Pass lowerIsBetter for counts like grammar issues.
-export function Change({ before, after, lowerIsBetter = false, digits = 0 }) {
-  if (typeof before !== 'number' || typeof after !== 'number') return <span className="text-slate-500">—</span>;
-  const diff = Math.round((after - before) * 10 ** digits) / 10 ** digits;
-  if (diff === 0) return <span className="text-slate-400">±0</span>;
-  const good = lowerIsBetter ? diff < 0 : diff > 0;
-  return <span className={`font-medium ${good ? 'text-emerald-400' : 'text-red-400'}`}>{diff > 0 ? `+${diff}` : `−${Math.abs(diff)}`}</span>;
 }
 
 export function PageHeader({ title, subtitle, actions, children }) {

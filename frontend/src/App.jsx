@@ -7,8 +7,7 @@ import Login from './pages/Login.jsx';
 import Portal from './pages/Portal.jsx';
 import NewContent from './pages/NewContent.jsx';
 import History from './pages/History.jsx';
-import DocumentResults from './pages/DocumentResults.jsx';
-import Compare from './pages/Compare.jsx';
+import AnalysisDashboard from './pages/AnalysisDashboard.jsx';
 import NotFound from './pages/NotFound.jsx';
 
 export default function App() {
@@ -26,8 +25,7 @@ export default function App() {
           <Route path="/dashboard" element={<Portal />} />
           <Route path="/new" element={<NewContent />} />
           <Route path="/documents" element={<History />} />
-          <Route path="/documents/:id" element={<DocumentResults />} />
-          <Route path="/documents/:id/compare" element={<Compare />} />
+          <Route path="/documents/:id/analysis" element={<AnalysisDashboard />} />
         </Route>
       </Route>
 

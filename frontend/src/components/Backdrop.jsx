@@ -1,4 +1,3 @@
-// Decorative charcoal backdrop: animated grid + soft indigo glow.
 export default function Backdrop() {
   return (
     <div aria-hidden="true" className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-charcoal-950">

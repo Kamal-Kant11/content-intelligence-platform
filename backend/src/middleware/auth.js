@@ -2,8 +2,6 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config/config.js';
 import User from '../models/User.js';
 
-// The JWT lives in an HTTP-only cookie, so page scripts can never read it.
-// SameSite=Strict keeps the browser from sending it with requests started by other sites.
 export const AUTH_COOKIE = 'contentiq_token';
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -18,7 +16,6 @@ export function clearAuthCookie(res) {
   res.clearCookie(AUTH_COOKIE, cookieOptions());
 }
 
-// Protects private routes: req.user is the signed-in user.
 export async function protect(req, res, next) {
   try {
     const token = req.cookies?.[AUTH_COOKIE];

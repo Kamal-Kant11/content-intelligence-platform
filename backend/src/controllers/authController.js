@@ -4,13 +4,8 @@ import { clearAuthCookie, setAuthCookie } from "../middleware/auth.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
-
-
-
-// register
 export async function signup(req, res, next) {
   try {
-    // Express 5 leaves req.body undefined when no JSON body is sent
     const body = req.body ?? {};
     const name = String(body.name || "").trim();
     const email = String(body.email || "")
@@ -59,9 +54,6 @@ export async function signup(req, res, next) {
   }
 }
 
-
-
-// login
 export async function login(req, res, next) {
   try {
     const body = req.body ?? {};

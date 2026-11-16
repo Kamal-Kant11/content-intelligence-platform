@@ -1,32 +1,28 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { FileText, Globe, PlusCircle, Search, Type } from 'lucide-react';
+import { FileText, PlusCircle, Search } from 'lucide-react';
 import { api, getErrorMessage } from '../api/client.js';
-import { Alert, EmptyState, PageHeader, Score, Spinner, StatusBadge } from '../components/ui.jsx';
-import { formatDate, SOURCE_LABEL, STATUS } from '../utils/format.js';
-
-const SOURCE_ICON = { file: FileText, url: Globe, text: Type };
-
-// Original score → optimized score (when there is one).
-function ScorePair({ before, after }) {
-  return (
-    <span className="tabular-nums">
-      <Score value={before} />
-      {after !== null && after !== undefined && (
-        <>
-          <span className="mx-1 text-slate-500">→</span>
-          <Score value={after} />
-        </>
-      )}
-    </span>
-  );
-}
+import { Alert, EmptyState, PageHeader, Spinner } from '../components/ui.jsx';
+import { formatBytes, formatDate } from '../utils/format.js';
 
 export default function History() {
   const [documents, setDocuments] = useState(null);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
-  const [status, setStatus] = useState('all');
+  const [deletingId, setDeletingId] = useState(null);
+
+  async function remove(doc) {
+    if (!window.confirm(`Delete "${doc.title}"? This cannot be undone.`)) return;
+    setDeletingId(doc.id);
+    try {
+      await api.delete(`/documents/${doc.id}`);
+      setDocuments((list) => list.filter((d) => d.id !== doc.id));
+    } catch (err) {
+      setError(getErrorMessage(err, 'Could not delete the document.'));
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   useEffect(() => {
     api
@@ -37,17 +33,17 @@ export default function History() {
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return (documents || []).filter((d) => (status === 'all' || d.status === status) && (!q || d.title.toLowerCase().includes(q)));
-  }, [documents, query, status]);
+    return (documents || []).filter((d) => !q || d.title.toLowerCase().includes(q));
+  }, [documents, query]);
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Document history"
-        subtitle="Every document you have added. Open one to see its analysis, comparison and downloads."
+        title="Documents"
+        subtitle="Every file you have uploaded."
         actions={
           <Link to="/new" className="btn-primary">
-            <PlusCircle size={16} /> New analysis
+            <PlusCircle size={16} /> Upload file
           </Link>
         }
       />
@@ -58,22 +54,11 @@ export default function History() {
       {documents && (
         <div className="card overflow-hidden">
           {documents.length > 0 && (
-            <div className="flex flex-col gap-3 border-b border-charcoal-800 p-4 sm:flex-row">
-              <label className="relative flex-1">
+            <div className="border-b border-charcoal-800 p-4">
+              <label className="relative block">
                 <span className="sr-only">Search by title</span>
                 <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
                 <input className="input pl-9" placeholder="Search by title" value={query} onChange={(e) => setQuery(e.target.value)} />
-              </label>
-              <label className="sm:w-52">
-                <span className="sr-only">Filter by status</span>
-                <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
-                  <option value="all">All statuses</option>
-                  {Object.entries(STATUS).map(([value, { label }]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
               </label>
             </div>
           )}
@@ -82,10 +67,10 @@ export default function History() {
             <EmptyState
               icon={FileText}
               title="No documents yet"
-              text="Your analyzed documents will appear here."
+              text="Your uploaded files will appear here."
               action={
                 <Link to="/new" className="btn-primary">
-                  Start your first analysis
+                  Upload your first file
                 </Link>
               }
             />
@@ -93,36 +78,27 @@ export default function History() {
             <p className="px-5 py-10 text-center text-sm text-slate-400">No documents match your search.</p>
           ) : (
             <ul className="divide-y divide-charcoal-800">
-              {shown.map((doc) => {
-                const Icon = SOURCE_ICON[doc.sourceType];
-                return (
-                  <li key={doc.id}>
-                    <Link to={`/documents/${doc.id}`} className="grid gap-3 px-5 py-4 transition hover:bg-charcoal-800/70 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-                      <div className="flex min-w-0 gap-3">
-                        <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-charcoal-800 text-slate-300">
-                          <Icon size={17} />
-                        </span>
-                        <div className="min-w-0">
-                          <p className="truncate font-medium text-white">{doc.title}</p>
-                          <p className="mt-0.5 truncate text-xs text-slate-400">
-                            {SOURCE_LABEL[doc.sourceType]}
-                            {doc.sourceName && ` · ${doc.sourceName}`} · updated {formatDate(doc.updatedAt)}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-slate-400 md:justify-end">
-                        <span>
-                          Grammar <ScorePair before={doc.scores.originalGrammar} after={doc.scores.optimizedGrammar} />
-                        </span>
-                        <span>
-                          Readability <ScorePair before={doc.scores.originalReadability} after={doc.scores.optimizedReadability} />
-                        </span>
-                        <StatusBadge status={doc.status} />
-                      </div>
-                    </Link>
-                  </li>
-                );
-              })}
+              {shown.map((doc) => (
+                <li key={doc.id} className="flex gap-3 px-5 py-4">
+                  <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-charcoal-800 text-slate-300">
+                    <FileText size={17} />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-white">{doc.title}</p>
+                    <p className="mt-0.5 truncate text-xs text-slate-400">
+                      {doc.hasFile ? `${doc.fileName} · ${formatBytes(doc.size)}` : 'Typed text'} · added {formatDate(doc.createdAt)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => remove(doc)}
+                    disabled={deletingId === doc.id}
+                    className="btn-secondary shrink-0 self-start text-red-300 hover:text-red-200"
+                  >
+                    {deletingId === doc.id ? 'Deleting…' : 'Delete'}
+                  </button>
+                </li>
+              ))}
             </ul>
           )}
         </div>

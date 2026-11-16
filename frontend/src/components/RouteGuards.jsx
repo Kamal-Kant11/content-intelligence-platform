@@ -10,7 +10,6 @@ function FullPageSpinner() {
   );
 }
 
-// Private pages: redirect to login when there is no session.
 export function ProtectedRoute() {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -19,7 +18,6 @@ export function ProtectedRoute() {
   return <Outlet />;
 }
 
-// Login/Signup: skip them when already signed in.
 export function GuestRoute() {
   const { user, loading } = useAuth();
   if (loading) return <FullPageSpinner />;

@@ -6,7 +6,6 @@ import healthRoutes from './routes/healthRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import documentRoutes from './routes/documentRoutes.js';
 
-// Builds the Express app without connecting to MongoDB or listening, so tests can import it.
 export function createApp() {
   const app = express();
 
@@ -28,9 +27,6 @@ export function createApp() {
 
   app.use((req, res) => res.status(404).json({ message: 'Route not found.' }));
 
-  // Central error handler. Express 5 forwards errors thrown in async handlers here.
-  // Every error response has the same shape: { message }.
-  // eslint-disable-next-line no-unused-vars
   app.use((err, _req, res, _next) => {
     if (err.type === 'entity.parse.failed') return res.status(400).json({ message: 'Invalid JSON body.' });
     if (err.type === 'entity.too.large') return res.status(413).json({ message: 'Request body is too large.' });
