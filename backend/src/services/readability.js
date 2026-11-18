@@ -27,6 +27,7 @@ export function sentenceSegments(text = '') {
 }
 
 export function readabilitySpans(text = '') {
+<<<<<<< HEAD
   const sentences = sentenceSegments(text);
   const spans = [];
   for (const sentence of sentences) {
@@ -62,6 +63,18 @@ export function readabilitySpans(text = '') {
         sentenceEnd: sentence.end,
         advice: `"${m[0]}" has ${syllables} syllables. Replace it with a shorter, everyday word that means the same thing.`,
       });
+=======
+  const spans = [];
+  for (const sentence of sentenceSegments(text)) {
+    const words = (sentence.text.match(WORD_PATTERN) || []).length;
+    if (words > READABILITY.longSentenceWords) {
+      spans.push({ start: sentence.start, end: sentence.end, kind: 'readability', id: 'long-sentence', label: `Long sentence (${words} words)` });
+    }
+  }
+  for (const m of text.matchAll(WORD_PATTERN)) {
+    if (countSyllables(m[0]) >= READABILITY.complexWordSyllables) {
+      spans.push({ start: m.index, end: m.index + m[0].length, kind: 'readability', id: 'complex-word', label: 'Complex word' });
+>>>>>>> bfa39c5c92556a58a6a4353a3094e5a37d68e0e8
     }
   }
   return spans;
