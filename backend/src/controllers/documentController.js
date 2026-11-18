@@ -4,10 +4,6 @@ import { config } from '../config/config.js';
 import Document from '../models/Document.js';
 import { extractPdfText } from '../services/pdfText.js';
 import { analyzeText } from '../services/textAnalysis.js';
-<<<<<<< HEAD
-=======
-import { checkGrammar } from '../services/grammarCheck.js';
->>>>>>> bfa39c5c92556a58a6a4353a3094e5a37d68e0e8
 import { checkReadability } from '../services/readability.js';
 import { analyzeDocumentLines } from '../services/lineAnalysis.js';
 import { badRequest, notFound } from '../utils/httpError.js';
@@ -47,11 +43,7 @@ async function readDocumentText(doc) {
 }
 
 function currentText(doc, r) {
-<<<<<<< HEAD
   return [r.pdfText, r.typedText].filter(Boolean).join('\n\n');
-=======
-  return doc.approvedText ?? [r.pdfText, r.typedText].filter(Boolean).join('\n\n');
->>>>>>> bfa39c5c92556a58a6a4353a3094e5a37d68e0e8
 }
 
 function presentDocument(doc) {
@@ -135,10 +127,6 @@ export async function getDocumentScores(req, res) {
   const text = currentText(doc, r);
 
   res.json({
-<<<<<<< HEAD
-=======
-    grammar: checkGrammar(text),
->>>>>>> bfa39c5c92556a58a6a4353a3094e5a37d68e0e8
     readability: checkReadability(text),
   });
 }
@@ -149,23 +137,7 @@ export async function getDocumentLines(req, res) {
   const text = currentText(doc, r);
   if (!text.trim()) throw badRequest('There is no text to check.');
 
-<<<<<<< HEAD
   res.json(analyzeDocumentLines(text));
-=======
-  res.json({ ...analyzeDocumentLines(text), approved: Boolean(doc.approvedText) });
-}
-
-export async function approveDocument(req, res) {
-  const doc = await findOwnDocument(req, { withFile: true });
-  const r = await readDocumentText(doc);
-  const optimized = analyzeDocumentLines(currentText(doc, r)).lines.map((line) => line.optimizedText).join('\n');
-  if (!optimized.trim()) throw badRequest('There is no text to approve.');
-
-  doc.approvedText = optimized;
-  doc.approvedAt = new Date();
-  await doc.save();
-  res.json({ document: presentDocument(doc) });
->>>>>>> bfa39c5c92556a58a6a4353a3094e5a37d68e0e8
 }
 
 function pick(object, keys) {

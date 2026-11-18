@@ -9,11 +9,6 @@ const documentSchema = new mongoose.Schema(
     size: { type: Number, default: 0 },
     data: { type: Buffer, select: false },
     text: { type: String, default: '' },
-<<<<<<< HEAD
-=======
-    approvedText: { type: String, default: null },
-    approvedAt: { type: Date, default: null },
->>>>>>> bfa39c5c92556a58a6a4353a3094e5a37d68e0e8
   },
   { timestamps: true }
 );
